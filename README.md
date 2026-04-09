@@ -52,8 +52,9 @@ graph TD
 
 ## 🚀 Installation & Setup
 
-### 1. File Permissions
-This system utilizes two flat-file databases for data storage. You must create these files and ensure they are writable by your web server (e.g., `www-data` or `apache`).
+### 1. Requirements
+*   **Web Server:** PHP 7.4 or higher.
+*   **File Permissions:** This system utilizes two flat-file databases (`database.txt` and `admins.txt`). You must create these files and ensure they are writable by your web server (e.g., `www-data` or `apache`).
 
 1. Create the files:
    ```bash
@@ -64,22 +65,30 @@ This system utilizes two flat-file databases for data storage. You must create t
    chmod 666 database.txt admins.txt
    ```
 
-### 2. Configuration
-*   **Web Server:** Ensure your server is running PHP 7.4 or higher.
-*   **Initial Login:** Upload the script. Add the followings to admins.txt file to create the main user account:
-    ```bash
-    #UUID: admin_12341234
-    #USERNAME: adminname
-    #PASSWORD: 12341234
-    ```
-*   **Security:** After initial login, navigate to the admin panel to add new users and update the main administrative password immediately.
+### 2. Initial Configuration
+*   **Initial Login:** After uploading, access the script via your browser. Use the following default credentials to log in:
+    *   **Main Admin UUID:** `admin_12341234`
+    *   **Password:** `12341234`
+*   **Security:** Navigate to the admin panel immediately to create new admin users.
 
 ---
 
-## 📊 X-UI Integration
-To enable real-time bandwidth monitoring, insert the **Stats URL** provided by your X-UI panel into the "Stats Info URL" field for any configuration group. The script will automatically parse the HTML/JSON output to display:
-*   **Remaining Traffic:** Real-time GB calculation.
-*   **Expiration Date:** Automatic countdown of days/hours remaining.
+## 📊 X-UI Integration & Stats Scraper
+
+The statistics monitoring logic is powered by a robust scraper developed by [Captanx52](https://github.com/Captanx52). This engine uses `cURL` with spoofed User-Agents to fetch real-time usage data from your X-UI panels.
+
+**Customizing the Scraper:**
+If your X-UI panel version or structure differs, you can modify the parsing logic within the `get_data_from_url` function in `index.php`:
+
+```php
+function get_data_from_url($url) {
+    // ... logic for cURL and response handling
+    // Adjust this Regex pattern based on your panel's HTML output:
+    if (preg_match_all('/(\d+(?:\.\d+)?)\s*(GB|MB)/i', $response, $matches)) {
+        // ... calculation logic
+    }
+}
+```
 
 ---
 
@@ -100,5 +109,5 @@ Distributed under the **MIT License**. This software is intended for legitimate 
 
 ---
 <p align="center">
-  Optimized configuration management for the modern infrastructure. 🍁
+  Optimized configuration management for modern infrastructure. 🍁
 </p>
