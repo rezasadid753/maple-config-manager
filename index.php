@@ -1,9 +1,9 @@
 <?php
-ob_start(); // Prevent header errors
+ob_start();
 session_start();
 
 // Configuration
-define("MAIN_ADMIN_PASSWORD", "12341234");
+define("MAIN_ADMIN_PASSWORD", "1234");
 define("MAIN_ADMIN_UUID", "admin_12341234");
 define("DB_FILE", "database.txt");
 define("SERIES_NAME", "Maple");
@@ -41,6 +41,78 @@ if (!file_exists(ADMIN_DB_FILE) || filesize(ADMIN_DB_FILE) === 0) {
     add_admin_user('main_admin', MAIN_ADMIN_PASSWORD, MAIN_ADMIN_UUID);
 }
 
+// Server-side fetching logic: acts exactly like a VPN client.
+// Fast timeout (3s) + cURL integration for maximum reliability against Firewalls/WAFs
+function get_data_from_url($url) {
+    if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) return '?';
+    
+    $response = false;
+    $userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
+    
+    // 1. Try cURL first (Most robust, handles SSL and redirects best)
+    if (function_exists('curl_init')) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_USERAGENT, $userAgent);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        $response = curl_exec($ch);
+        curl_close($ch);
+    } 
+    
+    // 2. Fallback to file_get_contents if cURL is disabled or failed
+    if ($response === false || empty($response)) {
+        $opts = [
+            "http" => ["method" => "GET", "header" => "User-Agent: $userAgent\r\n", "timeout" => 3],
+            "ssl" => ["verify_peer" => false, "verify_peer_name" => false]
+        ];
+        $context = stream_context_create($opts);
+        $response = @file_get_contents($url, false, $context);
+    }
+    
+    if (empty($response)) return "?";
+
+    // Decode Base64 if the panel returned raw subscription format
+    if (strpos($response, '://') === false) {
+        $decoded = base64_decode(trim($response), true);
+        if ($decoded !== false && strpos($decoded, '://') !== false) {
+            $response = $decoded;
+        }
+    }
+
+    $response = urldecode($response);
+    
+    // Robust Regex to find patterns like "-1.75GB" or "838.68MB", ignoring prepended non-digit characters.
+    if (preg_match_all('/(\d+(?:\.\d+)?)\s*(GB|MB)/i', $response, $matches)) {
+        $lastIndex = count($matches[1]) - 1;
+        $val = floatval($matches[1][$lastIndex]);
+        $unit = strtoupper($matches[2][$lastIndex]);
+
+        if ($unit === 'MB') {
+            $val = $val / 1024;
+        }
+        return number_format($val, 2, '.', '');
+    }
+
+    return "?";
+}
+
+/* ================= 0.5 BUILT-IN AJAX PROXY ================= */
+// This allows the frontend to fetch data without CORS/CSP errors
+// Strict anti-caching headers added to prevent "incognito mode" bugs
+if (isset($_GET['ajax_fetch'])) {
+    ob_clean();
+    header('Content-Type: text/plain');
+    header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+    header("Cache-Control: post-check=0, pre-check=0", false);
+    header("Pragma: no-cache");
+    echo get_data_from_url($_GET['ajax_fetch']);
+    exit;
+}
+
 /* ================= 0. DATABASE HELPER FUNCTIONS (GROUP AWARE) ================= */
 
 function get_database_groups() {
@@ -55,11 +127,15 @@ function get_database_groups() {
     $currentType = 'auto'; 
     $currentExclude = false;
     $currentFree = false; 
-    $currentOwner = ''; 
+    $currentHideStats = false;
+    $currentOwner = '';
+    $currentExpireDate = 0;
+    $currentNoTimeLimit = false;
+    $currentQuota = 0;
     $currentConfigs =[];
     $needsSave = false;
 
-    $finalizeGroup = function() use (&$groups, &$currentName, &$currentUUID, &$currentPass, &$currentNote, &$currentInfo, &$currentType, &$currentExclude, &$currentFree, &$currentOwner, &$currentConfigs, &$needsSave) {
+    $finalizeGroup = function() use (&$groups, &$currentName, &$currentUUID, &$currentPass, &$currentNote, &$currentInfo, &$currentType, &$currentExclude, &$currentFree, &$currentHideStats, &$currentOwner, &$currentExpireDate, &$currentNoTimeLimit, &$currentQuota, &$currentConfigs, &$needsSave) {
         if (!empty($currentConfigs)) {
             if (empty($currentUUID)) {
                 $currentUUID = uniqid(); 
@@ -78,7 +154,11 @@ function get_database_groups() {
                 'type' => $currentType,
                 'exclude' => $currentExclude,
                 'free' => $currentFree,
+                'hide_stats' => $currentHideStats,
                 'owner' => $currentOwner, 
+                'expire_date' => $currentExpireDate,
+                'no_time_limit' => $currentNoTimeLimit,
+                'quota' => $currentQuota,
                 'configs' => $currentConfigs
             ];
         }
@@ -90,7 +170,11 @@ function get_database_groups() {
         $currentType = 'auto';
         $currentExclude = false;
         $currentFree = false; 
+        $currentHideStats = false;
         $currentOwner = ''; 
+        $currentExpireDate = 0;
+        $currentNoTimeLimit = false;
+        $currentQuota = 0;
         $currentConfigs =[];
     };
 
@@ -113,8 +197,16 @@ function get_database_groups() {
             $currentExclude = trim(substr($line, 10)) === 'true';
         } elseif (strpos($line, '#FREE: ') === 0) { 
             $currentFree = trim(substr($line, 7)) === 'true';
+        } elseif (strpos($line, '#HIDESTATS: ') === 0) { 
+            $currentHideStats = trim(substr($line, 12)) === 'true';
         } elseif (strpos($line, '#OWNER: ') === 0) { 
             $currentOwner = trim(substr($line, 8));
+        } elseif (strpos($line, '#EXPIRE: ') === 0) { 
+            $currentExpireDate = (int)trim(substr($line, 9));
+        } elseif (strpos($line, '#NOTIME: ') === 0) { 
+            $currentNoTimeLimit = trim(substr($line, 9)) === 'true';
+        } elseif (strpos($line, '#QUOTA: ') === 0) { 
+            $currentQuota = (float)trim(substr($line, 8));
         } elseif (preg_match('/^[a-z0-9]+\:\/\//i', $line)) {
             $currentConfigs[] = $line;
         }
@@ -139,7 +231,11 @@ function save_database_groups($groups) {
         if (!empty($group['type'])) $output[] = "#TYPE: " . $group['type']; 
         $output[] = "#EXCLUDE: " . ($group['exclude'] ? 'true' : 'false');
         $output[] = "#FREE: " . ($group['free'] ? 'true' : 'false');
+        $output[] = "#HIDESTATS: " . (!empty($group['hide_stats']) ? 'true' : 'false');
         if (!empty($group['owner'])) $output[] = "#OWNER: " . $group['owner'];
+        $output[] = "#EXPIRE: " . ($group['expire_date'] ?? 0);
+        $output[] = "#NOTIME: " . (!empty($group['no_time_limit']) ? 'true' : 'false');
+        $output[] = "#QUOTA: " . ($group['quota'] ?? 0);
         foreach ($group['configs'] as $cfg) {
             $output[] = $cfg;
         }
@@ -221,111 +317,6 @@ function authenticate_admin($username, $password) {
     return false;
 }
 
-function get_user_stats($url) {
-    if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
-        return['error' => 'Invalid URL'];
-    }
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    curl_setopt($ch, CURLOPT_HTTPHEADER,[
-        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language: en-US,en;q=0.5',
-        'Accept-Encoding: gzip, deflate',
-        'Connection: keep-alive',
-        'Upgrade-Insecure-Requests: 1',
-        'Cache-Control: max-age=0',
-    ]);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
-    curl_setopt($ch, CURLOPT_ENCODING, '');
-    $html = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if (!$html || $httpCode !== 200) {
-        return['error' => 'Failed (HTTP ' . $httpCode . ')'];
-    }
-
-    $limitGB = 0;
-    $usedGB = 0;
-    $timeString = "Unknown";
-    $isExpired = false;
-
-    $plainText = strip_tags($html);
-    $plainText = preg_replace('/\s+/', ' ', $plainText);
-
-    if (preg_match('/Data Limit:\s*([\d\.]+)\s*(GB|MB|KB|B)/i', $plainText, $matches)) {
-        $val = floatval($matches[1]);
-        $unit = strtoupper($matches[2]);
-        if ($unit === 'B') $limitGB = $val / 1073741824;
-        elseif ($unit === 'KB') $limitGB = $val / 1048576;
-        elseif ($unit === 'MB') $limitGB = $val / 1024;
-        else $limitGB = $val;
-    }
-
-    if (preg_match('/Data Used:\s*([\d\.]+)\s*(GB|MB|KB|B)/i', $plainText, $matches)) {
-        $val = floatval($matches[1]);
-        $unit = strtoupper($matches[2]);
-        if ($unit === 'B') $usedGB = $val / 1073741824;
-        elseif ($unit === 'KB') $usedGB = $val / 1048576;
-        elseif ($unit === 'MB') $usedGB = $val / 1024;
-        else $usedGB = $val;
-    }
-
-    if ($limitGB === 0 && preg_match('/Data Limit:\s*0/i', $plainText)) {
-        $remainingGB = '∞';
-        $limitGB = '∞';
-    } else {
-        $remainingGB = max(0, $limitGB - $usedGB);
-    }
-
-    if (preg_match('/Expiration Date:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/i', $plainText, $matches)) {
-        $expDateStr = $matches[1];
-        try {
-            $expDate = new DateTime($expDateStr);
-            $now = new DateTime();
-            if ($now > $expDate) {
-                $timeString = "Expired";
-                $isExpired = true;
-            } else {
-                $diff = $now->diff($expDate);
-                if ($diff->days >= 1) {
-                    $timeString = $diff->days . " Day" . ($diff->days > 1 ? "s" : "");
-                } else {
-                    $timeString = sprintf("%02dh %02dm", $diff->h, $diff->i);
-                }
-            }
-        } catch (Exception $e) {
-            $timeString = "Invalid Date";
-        }
-    }
-
-    return[
-        'left_gb' => ($remainingGB === '∞') ? '∞' : number_format((float)$remainingGB, 2),
-        'total_gb' => ($limitGB === '∞') ? '∞' : number_format((float)$limitGB, 2),
-        'time_left' => $timeString,
-        'expired' => $isExpired
-    ];
-}
-
-/* ================= 0.5 AJAX STATS ENDPOINT ================= */
-if (isset($_GET['ajax_stats'])) {
-    header('Content-Type: application/json');
-    $url = $_POST['url'] ?? '';
-    if (empty($url)) {
-        echo json_encode(['error' => 'No URL provided']);
-        exit;
-    }
-    echo json_encode(get_user_stats($url));
-    exit;
-}
-
 /* ================= 1. FREE CONFIGS MANAGEMENT ENDPOINT ================= */
 if (isset($_GET['free_configs'])) {
     $groups = get_database_groups();
@@ -360,7 +351,11 @@ if (isset($_GET['free_configs'])) {
                 'type' => 'auto',
                 'exclude' => false,
                 'free' => true,
+                'hide_stats' => false,
                 'owner' => '',
+                'expire_date' => 0,
+                'no_time_limit' => true,
+                'quota' => 0,
                 'configs' => $newConfigs
             ];
             save_database_groups($groups);
@@ -457,7 +452,7 @@ if (isset($_GET['free_configs'])) {
                 <h3 class="form-section-title">➕ Add New Free Config</h3>
                 <form method="post">
                     <input type="text" name="config_name" placeholder="Config Name (Optional)">
-                    <input type="text" name="config_info" placeholder="Stats Info URL (Foton) (Optional)">
+                    <input type="text" name="config_info" placeholder="Stats Info URL (Marzban/X-UI) (Optional)">
                     <textarea name="config" rows="5" placeholder="Paste multiple vmess:// vless:// configs here, one per line..." required></textarea>
                     <button type="submit" name="add_free_config">Add Free Config</button>
                 </form>
@@ -475,19 +470,9 @@ if (isset($_GET['share'])) {
     $groups = get_database_groups(); 
     $targetGroup = null;
     $targetIndex = -1;
-    $reqOwner = $_GET['owner'] ?? '';
 
     foreach ($groups as $idx => $group) {
-        $groupOwner = $group['owner'] ?? '';
-        $ownerMatches = false;
-
-        if (!empty($reqOwner)) {
-            $ownerMatches = ($groupOwner === $reqOwner);
-        } else {
-            $ownerMatches = (empty($groupOwner) || $groupOwner === MAIN_ADMIN_UUID);
-        }
-
-        if ($group['uuid'] === $reqUUID && $ownerMatches) {
+        if ($group['uuid'] === $reqUUID) {
             $targetGroup = $group;
             $targetIndex = $idx;
             break;
@@ -499,23 +484,86 @@ if (isset($_GET['share'])) {
         die("❌ Config not found.");
     }
 
-    if (isset($_GET['pass']) && secure_compare($_GET['pass'], $targetGroup['pass'])) {
-        header("Content-Type: text/plain; charset=utf-8");
-        // Output base64 directly if sub=1 is presented for regular configs too!
+    if ((isset($_GET['pass']) && secure_compare($_GET['pass'], $targetGroup['pass'])) || ($targetGroup['free'] && isset($_GET['sub']) && $_GET['sub'] === '1')) {
+        
+        // Output base64 directly if sub=1 is presented for configs
         if (isset($_GET['sub']) && $_GET['sub'] === '1') {
-            header("profile-title: " . SERIES_NAME . " - " . $targetGroup['name']);
-            echo base64_encode(implode(PHP_EOL, $targetGroup['configs']));
-        } else {
-            echo implode(PHP_EOL, $targetGroup['configs']);
-        }
-        exit;
-    }
+            error_reporting(0); // Suppress any warnings from breaking Base64 purity
+            
+            $exportConfigs = $targetGroup['configs'];
 
-    if (isset($_GET['sub']) && $_GET['sub'] === '1' && $targetGroup['free']) {
-        header("Content-Type: text/plain; charset=utf-8");
-        header("profile-title: " . SERIES_NAME . " - " . $targetGroup['name']);
-        echo base64_encode(implode(PHP_EOL, $targetGroup['configs']));
-        exit;
+            if (empty($targetGroup['hide_stats'])) {
+                header("profile-title: " . SERIES_NAME . " - " . $targetGroup['name']);
+                $headerParts = ["upload=0"];
+
+                if (empty($targetGroup['info'])) {
+                    // No info URL -> Treat as 0 usage and empty total
+                    $headerParts[] = "download=0";
+                    $headerParts[] = "total=0";
+                    $left_gb_raw = '?';
+                } else {
+                    $left_gb_raw = get_data_from_url($targetGroup['info']);
+                    $totalBytes = ($targetGroup['quota'] ?? 0) * 1073741824;
+                    $usedBytes = 0;
+                    
+                    if ($left_gb_raw !== '?' && $totalBytes > 0) {
+                        $leftBytes = (float)$left_gb_raw * 1073741824;
+                        $usedBytes = $totalBytes - $leftBytes;
+                        if ($usedBytes < 0) $usedBytes = 0;
+                    }
+                    $headerParts[] = "download=" . round($usedBytes);
+                    $headerParts[] = "total=" . round($totalBytes);
+                }
+                
+                // === Dummy Config Injection for Data & Time Readout ===
+                $parts = [SERIES_NAME];
+                if (!empty($targetGroup['info']) && $left_gb_raw !== '?') {
+                    $parts[] = "{$left_gb_raw}G";
+                }
+                
+                if (empty($targetGroup['no_time_limit'])) {
+                    $diff = $targetGroup['expire_date'] - time();
+                    $days = floor($diff / 86400);
+                    $parts[] = $days . 'D';
+                }
+
+                $dummyName = implode(" ", $parts);
+                // Valid standard format to ensure Hiddify doesn't ignore the rest of the configs
+                $dummyConfig = "vless://00000000-0000-0000-0000-000000000000@1.1.1.1:80?encryption=none&security=none&type=tcp#" . rawurlencode($dummyName);
+                
+                array_unshift($exportConfigs, $dummyConfig);
+                
+                // Set expiry safely beyond 10 years if no limit
+                if (!empty($targetGroup['no_time_limit'])) {
+                    $headerParts[] = "expire=" . (time() + 315360000);
+                } else {
+                    $headerParts[] = "expire=" . ($targetGroup['expire_date'] > 0 ? $targetGroup['expire_date'] : (time() + 315360000));
+                }
+                
+                header("Subscription-Userinfo: " . implode("; ", $headerParts));
+            }
+            // If hide_stats is true, we intentionally DO NOT set 'Subscription-Userinfo' or 'profile-title' 
+            // so that Hiddify imports it strictly as raw configs without erroring.
+            
+            // Clean configs to ensure Hiddify doesn't error out on \r\n or empty strings
+            $cleanExport = [];
+            foreach ($exportConfigs as $c) {
+                $c = trim($c);
+                if (!empty($c)) {
+                    $cleanExport[] = $c;
+                }
+            }
+            
+            ob_clean(); // Force clean buffer exactly before Base64 output
+            header("Content-Type: text/plain; charset=utf-8");
+            echo base64_encode(implode("\n", $cleanExport));
+            exit;
+        } else {
+            ob_clean();
+            header("Content-Type: text/plain; charset=utf-8");
+            echo implode("\n", $targetGroup['configs']);
+            exit;
+        }
     }
 
     $sessionKey = 'auth_share_' . $reqUUID;
@@ -578,7 +626,23 @@ if (isset($_GET['share'])) {
     if ($targetGroup['free']) {
         $isUnlocked = true;
     }
-    
+
+    // Pre-calculate Time String for User Page View
+    $isExpired = false;
+    $timeString = "--";
+    if ($targetGroup['no_time_limit']) {
+        $timeString = '∞';
+    } else {
+        $diff = $targetGroup['expire_date'] - time();
+        $days = floor($diff / 86400); 
+        if ($diff <= 0) {
+            $timeString = "Expired";
+            $isExpired = true;
+        } else {
+            $hours = floor(($diff % 86400) / 3600);
+            $timeString = $days > 0 ? "$days Days" : "$hours Hours";
+        }
+    }
     ?>
     <!DOCTYPE html>
     <html>
@@ -644,7 +708,6 @@ if (isset($_GET['share'])) {
             .config-row { display:flex; gap:8px; background:rgba(0,0,0,0.3); padding:8px; border-radius:10px; align-items:center; }
             .config-row .code-input { flex:1; min-width:0; font-family:monospace; font-size:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.1); color:#a7f3d0; padding:8px 12px; border-radius:8px; outline:none; margin-bottom:0; text-align:left; }
             
-            /* Icon Buttons for Free Config Rows */
             .btn-icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; border:none; border-radius:8px; cursor:pointer; flex-shrink:0; transition:0.3s; font-size:16px; margin-bottom:0; padding:0; }
             .btn-copy { background:#3b82f6; color:white; }
             .btn-copy:hover { filter:brightness(1.2); }
@@ -658,7 +721,7 @@ if (isset($_GET['share'])) {
             }
             .stat-card {
                 background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px;
-                border: 1px solid rgba(255,255,255,0.1); display:flex; flex-direction:column; justify-content:center;
+                border: 1px solid rgba(255,255,255,0.1); display:flex; flex-direction:column; justify-content:center; align-items:center;
             }
             .stat-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
             .stat-value { font-size: 16px; font-weight: bold; color: #fff; margin-top: 5px; }
@@ -693,7 +756,6 @@ if (isset($_GET['share'])) {
                     $proto = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http");
                     $baseUrl = $proto . "://" . $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
                     
-                    // Added &sub=1 to provide a robust base64 subscription format natively
                     $fullShareLink = $baseUrl . '?share=' . urlencode($targetGroup['uuid']) 
                                    . (!empty($targetGroup['owner']) ? '&owner=' . urlencode($targetGroup['owner']) : '') 
                                    . '&pass=' . urlencode($targetGroup['pass']) 
@@ -703,7 +765,7 @@ if (isset($_GET['share'])) {
 
                 <?php if ($targetGroup['free']): ?>
                     <?php
-                    $finalConfigStr = implode(PHP_EOL, $targetGroup['configs']);
+                    $finalConfigStr = implode("\n", $targetGroup['configs']);
                     $subUrl = $baseUrl . '?share=' . urlencode($targetGroup['uuid']) . '&sub=1#' . TAG_NAME;
                     ?>
                     <div class="config-list">
@@ -732,11 +794,11 @@ if (isset($_GET['share'])) {
 
                 <?php else: ?>
                     <?php
-                    $finalConfigStr = implode(PHP_EOL, $targetGroup['configs']);
+                    $finalConfigStr = implode("\n", $targetGroup['configs']);
                     ?>
 
-                <?php if (!empty($targetGroup['info']) && !$targetGroup['free']): ?>
-                    <button id="checkStatsBtn" class="btn-stats" onclick="fetchStats('<?= htmlspecialchars(addslashes($targetGroup['info'])) ?>')">
+                <?php if (!empty($targetGroup['info']) && !$targetGroup['free'] && empty($targetGroup['hide_stats'])): ?>
+                    <button id="checkStatsBtn" class="btn-stats" onclick="fetchClientStats()">
                         <div class="spinner" id="btnSpinner"></div>
                         <span id="btnText">🔄 Check Remaining Data</span>
                     </button>
@@ -747,10 +809,13 @@ if (isset($_GET['share'])) {
                         <div class="stat-card">
                             <div class="stat-label">Data Left</div>
                             <div class="stat-value" id="valData">-- GB</div>
+                            <?php if (!empty($targetGroup['quota']) && $targetGroup['quota'] > 0): ?>
+                            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px; font-weight: 600;">of <?= htmlspecialchars($targetGroup['quota']) ?>GB</div>
+                            <?php endif; ?>
                         </div>
                         <div class="stat-card">
                             <div class="stat-label">Time Remaining</div>
-                            <div class="stat-value" id="valTime">--</div>
+                            <div class="stat-value <?= $isExpired ? 'stat-red' : 'stat-green' ?>" id="valTime"><?= $timeString ?></div>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -810,48 +875,43 @@ if (isset($_GET['share'])) {
             }, 2000);
         }
 
-        function fetchStats(infoUrl) {
+        function fetchClientStats() {
             const btn = document.getElementById('checkStatsBtn');
             const spinner = document.getElementById('btnSpinner');
             const btnText = document.getElementById('btnText');
             const grid = document.getElementById('statsGrid');
             const errBox = document.getElementById('statsError');
             
+            const checkUrl = "<?= isset($targetGroup['info']) ? addslashes($targetGroup['info']) : '' ?>";
+            
+            if (!checkUrl) {
+                alert("No stats URL configured.");
+                return;
+            }
+
             btn.disabled = true;
             spinner.style.display = 'inline-block';
             btnText.innerText = "Checking...";
             grid.style.display = 'none';
             errBox.style.display = 'none';
 
-            const formData = new FormData();
-            formData.append('url', infoUrl);
-
-            fetch('?ajax_stats=1', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
+            // Uses our built-in PHP proxy & bypasses browser caches with a timestamp
+            fetch('?ajax_fetch=' + encodeURIComponent(checkUrl) + '&t=' + new Date().getTime())
+            .then(r => r.text())
+            .then(gb => {
                 btn.disabled = false;
                 spinner.style.display = 'none';
                 btnText.innerText = "🔄 Refresh Data";
 
-                if (data.error) {
-                    errBox.style.display = 'block';
-                    errBox.innerText = "⚠️ " + data.error;
-                } else {
+                let val = parseFloat(gb);
+                if (!isNaN(val)) {
                     grid.style.display = 'grid';
-                    
                     const valData = document.getElementById('valData');
-                    const valTime = document.getElementById('valTime');
-
-                    valData.innerText = data.left_gb + ' GB';
-                    valTime.innerText = data.time_left;
-
-                    const dataColorClass = (data.left_gb === '∞' || parseFloat(data.left_gb) < 1) ? 'stat-red' : 'stat-green';
-                    const timeColorClass = data.expired ? 'stat-red' : 'stat-green';
-                    valData.className = `stat-value ${dataColorClass}`;
-                    valTime.className = `stat-value ${timeColorClass}`;
+                    valData.innerText = gb + " GB";
+                    valData.className = "stat-value " + (val < 1 ? 'stat-red' : 'stat-green');
+                } else {
+                    errBox.style.display = 'block';
+                    errBox.innerText = "⚠️ Error parsing data from panel URL.";
                 }
             })
             .catch(error => {
@@ -859,7 +919,7 @@ if (isset($_GET['share'])) {
                 spinner.style.display = 'none';
                 btnText.innerText = "🔄 Check Remaining Data";
                 errBox.style.display = 'block';
-                errBox.innerText = "⚠️ Network error trying to fetch data.";
+                errBox.innerText = "⚠️ Network error trying to connect to the panel.";
             });
         }
         </script>
@@ -1025,7 +1085,7 @@ if ($is_authenticated_sub) {
             <div class="container">
                 <h1>🍁 <?= SERIES_NAME ?> Configs</h1>
                 <?php foreach ($groups as $group): 
-                    $cfgContent = implode(PHP_EOL, $group['configs']);
+                    $cfgContent = implode("\n", $group['configs']);
                     $shareLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/index.php?share='.urlencode($group['uuid']) . (!empty($group['owner']) ? '&owner=' . urlencode($group['owner']) : '') . '#' . TAG_NAME;
                 ?>
                 <div class="config-item">
@@ -1080,6 +1140,7 @@ if ($is_authenticated_sub) {
     }
 
     if (isset($_GET['raw'])) {
+        ob_clean();
         header("Content-Type: text/plain; charset=utf-8");
         echo file_exists(DB_FILE) ? trim(file_get_contents(DB_FILE)) : '';
         exit;
@@ -1099,15 +1160,19 @@ if ($is_authenticated_sub) {
 
         if (!$group['exclude'] && $ownerMatches) { 
             foreach ($group['configs'] as $cfg) {
-                $cleanLines[] = $cfg;
+                $cfg = trim($cfg);
+                if (!empty($cfg)) {
+                    $cleanLines[] = $cfg;
+                }
             }
         }
     }
-    $cleanOutput = implode(PHP_EOL, $cleanLines);
     
+    error_reporting(0);
+    ob_clean(); // Prevent Hiddify base64 parse errors
     header("Content-Type: text/plain; charset=utf-8");
     header("profile-title: " . SERIES_NAME);
-    echo base64_encode($cleanOutput);
+    echo base64_encode(implode("\n", $cleanLines));
     exit;
 }
 
@@ -1254,6 +1319,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
         
         if (!empty($newConfigs)) {
             $isFree = isset($_POST['config_free_add']);
+            $noTime = isset($_POST['config_notime_add']);
+            $days = (int)($_POST['config_days'] ?? 0);
+            $quota = (float)($_POST['config_quota_add'] ?? 0);
+            
+            $expireDate = $noTime ? 0 : time() + ($days * 86400);
+
             $groups[] =[
                 'uuid' => uniqid(),
                 'name' => trim($_POST['config_name']) ?: 'Config ' . (count($groups) + 1),
@@ -1261,9 +1332,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                 'note' => trim($_POST['config_note']),
                 'info' => trim($_POST['config_info']),
                 'type' => 'auto',
-                'exclude' => false,
+                'exclude' => isset($_POST['config_exclude_add']),
                 'free' => $isFree,
+                'hide_stats' => isset($_POST['config_hide_stats_add']),
                 'owner' => $currentAdmin['uuid'] ?? '',
+                'expire_date' => $expireDate,
+                'no_time_limit' => $noTime,
+                'quota' => $quota,
                 'configs' => $newConfigs
             ];
             save_database_groups($groups);
@@ -1294,8 +1369,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                         if(isset($data['info'])) $group['info'] = trim($data['info']);
                         
                         $group['exclude'] = isset($data['exclude']);
-                        
                         $group['free'] = isset($data['free']);
+                        $group['hide_stats'] = isset($data['hide_stats']);
+                        $group['no_time_limit'] = isset($data['notime']);
+                        $group['quota'] = (float)($data['quota'] ?? 0);
+
+                        // Expiry parsing
+                        if (!$group['no_time_limit']) {
+                            $old_days = (int)($data['old_days'] ?? 0);
+                            $new_days = (int)($data['days'] ?? 0);
+                            
+                            // Only overwrite the expire_date if the admin explicitly changed the days remaining
+                            if ($new_days !== $old_days) {
+                                $group['expire_date'] = time() + ($new_days * 86400);
+                            }
+                        } else {
+                            $group['expire_date'] = 0;
+                        }
+
                         if ($group['free']) {
                             $group['pass'] = ''; // Ensure free configs don't store passwords
                         } else {
@@ -1365,6 +1456,13 @@ h1{font-size:36px;margin:0 0 10px 0;color:#4ade80;}
     backdrop-filter:blur(30px);border:1px solid rgba(34,197,94,0.2);
     border-radius:24px;padding:25px;margin-bottom:25px;
     box-shadow:0 20px 40px rgba(0,0,0,0.3);
+    transition: all 0.3s ease;
+}
+
+/* Active Config Highlight */
+.card.active-config {
+    border: 1px solid rgba(234, 179, 8, 0.6);
+    box-shadow: 0 20px 40px rgba(234, 179, 8, 0.15);
 }
 
 input,textarea{
@@ -1376,28 +1474,25 @@ input:focus,textarea:focus{
     outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.15);
 }
 
+/* Custom Input Wrappers with Units inside */
+.input-wrapper { position: relative; flex: 1; max-width: 150px; }
+.input-wrapper input { padding-right: 48px; }
+.input-wrapper .unit { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 13px; font-weight: bold; pointer-events: none; }
+
 .row-inputs { display:flex; gap: 10px; margin-bottom:12px; }
 .name-input { flex: 2; border-color:rgba(34,197,94,0.4); }
 .pass-input { flex: 1; border-color:rgba(234,179,8,0.4); }
 .note-input { flex:1; border-color:rgba(99,102,241,0.4); }
 
-.info-row { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+.info-row { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
 .info-input { flex:3; border-color:rgba(236, 72, 153, 0.4); }
 .btn-check { 
     flex:1; background:#0ea5e9; color:white; border:none; padding:12px; border-radius:12px; 
     cursor:pointer; font-weight:bold; display:flex; align-items:center; justify-content:center; gap:5px;
+    min-width: 90px;
 }
 .btn-check:hover { background:#0284c7; }
 .btn-check:disabled { background:#334155; cursor:wait; }
-
-.stats-result {
-    display:none; background:rgba(0,0,0,0.3); padding:10px; border-radius:10px;
-    margin-bottom:10px; border:1px solid rgba(255,255,255,0.1); font-size:13px;
-    color:#a7f3d0;
-}
-.stat-val { font-weight:bold; color:white; margin-left:5px; margin-right:15px; }
-.stat-red { color:#f87171; }
-.stat-green { color:#4ade80; }
 
 .config-preview{
     background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);
@@ -1417,9 +1512,37 @@ input:focus,textarea:focus{
 .btn-danger{background:#ef4444;}
 .btn:hover{transform:translateY(-2px);filter:brightness(1.1);}
 
-.exclude-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); padding: 0 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); width: fit-content; height: 45px; }
-.exclude-row input[type="checkbox"] { width: auto; margin: 0; transform: scale(1.2); }
-.exclude-row label { font-size: 14px; color: #cbd5e1; cursor: pointer; user-select: none; }
+/* Beautiful Checkbox UI */
+.checkbox-container {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 20px;
+    background: rgba(255,255,255,0.05);
+    padding: 16px 20px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.1);
+    margin-bottom: 15px;
+}
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+.checkbox-item input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: #22c55e;
+}
+.checkbox-item span {
+    font-size: 14px;
+    color: #cbd5e1;
+    font-weight: 600;
+    user-select: none;
+}
 
 .sub-section{
     text-align:center;padding:24px;background:rgba(15,23,42,0.6);
@@ -1433,7 +1556,6 @@ input:focus,textarea:focus{
 }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-/* Inline Admin Icon Buttons */
 .admin-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn-icon { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; cursor: pointer; transition: 0.3s; font-size: 16px; padding: 0; margin: 0; flex-shrink: 0;}
 .btn-icon.btn-secondary { background: #3b82f6; color: white; }
@@ -1444,15 +1566,13 @@ input:focus,textarea:focus{
 @media (max-width: 768px) {
     .row-inputs { flex-direction: column; gap: 10px; }
     .info-row { flex-direction: column; align-items: stretch; gap: 10px; border-bottom: none !important; padding-bottom: 0 !important; }
-    .btn-check, .info-input, .note-input, .exclude-row { width: 100%; flex: none; }
-    .exclude-row { height: auto; padding: 12px 16px; }
+    .btn-check, .info-input, .note-input, .input-wrapper { width: 100%; flex: none; max-width: none !important; }
+    .checkbox-container { flex-direction: column; align-items: flex-start; gap: 15px; }
     .btn-group { flex-direction: column; }
     header h1 { font-size: 28px; }
-    
-    /* Mobile formatting for admin rows */
     .admin-row { gap: 10px; margin-bottom: 20px !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important; padding-bottom: 20px !important; }
     .admin-actions { width: 100%; display: flex; gap: 10px; margin-top: 5px; }
-    .admin-actions .btn-icon { flex: 1; width: auto; height: 42px; } /* Makes save & delete 50% width */
+    .admin-actions .btn-icon { flex: 1; width: auto; height: 42px; }
 }
 </style>
 </head>
@@ -1494,7 +1614,7 @@ $base  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
 $adminSubPass = $currentAdmin['password'] ?? MAIN_ADMIN_PASSWORD;
 $adminSubUUID = $currentAdmin['uuid'] ?? MAIN_ADMIN_UUID;
 
-// Sub link defaults directly to Base64 Output 
+// Sub link defaults directly to Base64 Raw Output (WITHOUT &sub=1) for universal app import
 $subLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/index.php?pass='.urlencode($adminSubPass) . '&owner=' . urlencode($adminSubUUID) . '#' . TAG_NAME;
 ?>
 
@@ -1543,12 +1663,37 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
         
         <div class="info-row">
             <input type="text" name="config_note" class="note-input" placeholder="Private Note">
-            <input type="text" name="config_info" class="info-input" placeholder="Stats Info URL (Foton)">
+            <input type="text" name="config_info" class="info-input" placeholder="Stats Info URL (For Checking Remaining Data)">
         </div>
         
-        <div class="exclude-row" style="margin-bottom:15px;">
-            <input type="checkbox" name="config_free_add" id="config_free_add" onchange="toggleAddFreeConfig()">
-            <label for="config_free_add">Free Config (No Password)</label>
+        <div class="info-row" style="margin-bottom:15px;">
+            <div class="input-wrapper" id="add_days_wrapper">
+                <input type="number" name="config_days" id="config_days_add" class="info-input" placeholder="0">
+                <span class="unit">Days</span>
+            </div>
+            <div class="input-wrapper">
+                <input type="number" step="0.01" name="config_quota_add" id="config_quota_add" class="info-input" placeholder="0">
+                <span class="unit">GB</span>
+            </div>
+        </div>
+
+        <div class="checkbox-container">
+            <label class="checkbox-item">
+                <input type="checkbox" name="config_notime_add" id="config_notime_add" onchange="toggleAddNoTime()">
+                <span>No Time Limit</span>
+            </label>
+            <label class="checkbox-item">
+                <input type="checkbox" name="config_exclude_add" id="config_exclude_add">
+                <span>Exclude from My Sub</span>
+            </label>
+            <label class="checkbox-item">
+                <input type="checkbox" name="config_free_add" id="config_free_add" onchange="toggleAddFreeConfig()">
+                <span>Free Config</span>
+            </label>
+            <label class="checkbox-item">
+                <input type="checkbox" name="config_hide_stats_add" id="config_hide_stats_add">
+                <span>Hide Stats</span>
+            </label>
         </div>
 
         <textarea name="config" rows="3" placeholder="Paste multiple vmess:// vless:// configs here, one per line..." style="margin-bottom:15px;"></textarea>
@@ -1569,7 +1714,7 @@ foreach ($allAdmins as $admin) {
 }
 
 foreach ($groups as $i => $group): 
-    $fullConfig = implode(PHP_EOL, $group['configs']);
+    $fullConfig = implode("\n", $group['configs']);
     $shareLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/index.php?share='.urlencode($group['uuid']) . (!empty($group['owner']) ? '&owner=' . urlencode($group['owner']) : '') . '#' . TAG_NAME;
 
     $ownerName = '';
@@ -1578,7 +1723,7 @@ foreach ($groups as $i => $group):
     }
 ?>
 
-<div class="card">
+<div class="card <?= !$group['exclude'] ? 'active-config' : '' ?>">
     <div class="row-inputs">
         <div style="flex:2;position:relative;">
             <span style="position:absolute;left:10px;top:12px;">🏷️</span>
@@ -1599,31 +1744,55 @@ foreach ($groups as $i => $group):
     <div class="info-row" id="info_row_<?= $i ?>">
         <input type="text" name="updates[<?= $group['uuid'] ?>][info]" id="url_<?= $i ?>" 
                value="<?= htmlspecialchars($group['info'] ?? '') ?>" 
-               placeholder="🌐 Stats URL (Foton)" class="info-input">
+               placeholder="🌐 Stats URL" class="info-input">
 
-        <button type="button" class="btn-check" onclick="checkAdminStats(<?= $i ?>)">
+        <button type="button" class="btn-check" id="btn_check_<?= $i ?>" onclick="checkAdminStats(<?= $i ?>)">
             <div class="spinner" id="spin_<?= $i ?>"></div>
             <span id="btn_txt_<?= $i ?>">Check</span>
         </button>
     </div>
 
-    <!-- Hidden Stats Result -->
-    <div class="stats-result" id="res_<?= $i ?>">
-        <span id="txt_res_<?= $i ?>"></span>
+    <div class="info-row" style="margin-bottom:15px;">
+        <input type="text" name="updates[<?= $group['uuid'] ?>][note]" value="<?= htmlspecialchars($group['note'] ?? '') ?>" 
+               placeholder="📝 Private Note" class="note-input" style="flex:auto; width:100%;">
     </div>
 
-    <div class="info-row">
-        <input type="text" name="updates[<?= $group['uuid'] ?>][note]" value="<?= htmlspecialchars($group['note'] ?? '') ?>" 
-               placeholder="📝 Private Note" class="note-input">
+    <div class="info-row" style="margin-bottom:15px;">
+        <?php 
+            $daysLeft = '';
+            if (!$group['no_time_limit']) {
+                $daysLeft = floor(($group['expire_date'] - time()) / 86400); // Allow counting negatively safely
+            }
+        ?>
+        <input type="hidden" name="updates[<?= $group['uuid'] ?>][old_days]" value="<?= $daysLeft ?>">
         
-        <div class="exclude-row">
+        <div class="input-wrapper" id="days_wrapper_<?= $i ?>" style="<?= $group['no_time_limit'] ? 'display:none;' : '' ?>">
+            <input type="number" name="updates[<?= $group['uuid'] ?>][days]" id="days_<?= $i ?>" value="<?= $daysLeft ?>" placeholder="0" class="info-input">
+            <span class="unit">Days</span>
+        </div>
+        <div class="input-wrapper">
+            <input type="number" step="0.01" name="updates[<?= $group['uuid'] ?>][quota]" value="<?= !empty($group['quota']) ? htmlspecialchars($group['quota']) : '' ?>" placeholder="0" class="info-input">
+            <span class="unit">GB</span>
+        </div>
+    </div>
+
+    <div class="checkbox-container">
+        <label class="checkbox-item">
+            <input type="checkbox" name="updates[<?= $group['uuid'] ?>][notime]" id="notime_<?= $i ?>" <?= !empty($group['no_time_limit']) ? 'checked' : '' ?> onchange="toggleEditNoTime(<?= $i ?>)">
+            <span>No Time Limit</span>
+        </label>
+        <label class="checkbox-item">
             <input type="checkbox" name="updates[<?= $group['uuid'] ?>][exclude]" id="exclude_<?= $i ?>" <?= $group['exclude'] ? 'checked' : '' ?>>
-            <label for="exclude_<?= $i ?>">Exclude from App</label>
-        </div>
-        <div class="exclude-row">
+            <span>Exclude from My Sub</span>
+        </label>
+        <label class="checkbox-item">
             <input type="checkbox" name="updates[<?= $group['uuid'] ?>][free]" id="free_<?= $i ?>" <?= $group['free'] ? 'checked' : '' ?> onchange="toggleEditFreeConfig(<?= $i ?>)">
-            <label for="free_<?= $i ?>">Free Config</label>
-        </div>
+            <span>Free Config</span>
+        </label>
+        <label class="checkbox-item">
+            <input type="checkbox" name="updates[<?= $group['uuid'] ?>][hide_stats]" id="hide_stats_<?= $i ?>" <?= !empty($group['hide_stats']) ? 'checked' : '' ?>>
+            <span>Hide Stats</span>
+        </label>
     </div>
 
     <textarea name="updates[<?= $group['uuid'] ?>][configs]" class="config-preview" style="height:150px;width:100%;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:15px;color:#94a3b8;font-family:'JetBrains Mono',monospace;font-size:12px;resize:vertical;"><?= htmlspecialchars($fullConfig) ?></textarea>
@@ -1631,7 +1800,7 @@ foreach ($groups as $i => $group):
     <div class="btn-group">
         <button type="button" class="btn btn-secondary" onclick="copyText(decodeURIComponent('<?= rawurlencode($fullConfig) ?>'), this)">📋 Copy Config</button>
         <button type="button" class="btn btn-warning" onclick="copyText('<?= addslashes($shareLink) ?>', this)">🔗 Share Link</button>
-        <button type="submit" class="btn btn-primary">💾 Save All Modifications</button>
+        <button type="submit" class="btn btn-primary">💾 Save Modifications</button>
         <button type="button" class="btn btn-danger" onclick="confirmDelete('<?= $group['uuid'] ?>')">🗑️ Delete</button>
     </div>
 </div>
@@ -1657,7 +1826,6 @@ foreach ($groups as $i => $group):
 </div>
 
 <script>
-// --- UI Toggle for Free Config Password Inputs ---
 function toggleAddFreeConfig() {
     const isFree = document.getElementById('config_free_add').checked;
     const passInput = document.getElementById('add_config_pass');
@@ -1670,6 +1838,28 @@ function toggleEditFreeConfig(index) {
     const passInput = document.getElementById('pass_' + index);
     passInput.disabled = isFree;
     passInput.style.opacity = isFree ? '0.5' : '1';
+}
+
+function toggleAddNoTime() {
+    const isChecked = document.getElementById('config_notime_add').checked;
+    const daysWrapper = document.getElementById('add_days_wrapper');
+    const daysInput = document.getElementById('config_days_add');
+    if (isChecked) {
+        daysWrapper.style.display = 'none';
+        daysInput.value = '';
+    } else {
+        daysWrapper.style.display = 'block';
+    }
+}
+
+function toggleEditNoTime(index) {
+    const isChecked = document.getElementById('notime_' + index).checked;
+    const daysWrapper = document.getElementById('days_wrapper_' + index);
+    if (isChecked) {
+        daysWrapper.style.display = 'none';
+    } else {
+        daysWrapper.style.display = 'block';
+    }
 }
 
 function copyText(text, button) {
@@ -1717,12 +1907,12 @@ function confirmDelete(uuid) {
     }
 }
 
+// Built-in Internal Proxy Fetcher
 function checkAdminStats(index) {
     const urlInput = document.getElementById('url_' + index);
     const spinner = document.getElementById('spin_' + index);
     const btnTxt = document.getElementById('btn_txt_' + index);
-    const resBox = document.getElementById('res_' + index);
-    const resTxt = document.getElementById('txt_res_' + index);
+    const btnCheck = document.getElementById('btn_check_' + index);
     
     if (!urlInput.value) {
         alert("Please enter a URL first.");
@@ -1730,35 +1920,29 @@ function checkAdminStats(index) {
     }
 
     spinner.style.display = 'inline-block';
-    btnTxt.innerText = "Loading...";
-    resBox.style.display = 'none';
+    btnTxt.innerText = "";
+    btnCheck.disabled = true;
 
-    const formData = new FormData();
-    formData.append('url', urlInput.value);
-
-    fetch('?ajax_stats=1', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
+    fetch('?ajax_fetch=' + encodeURIComponent(urlInput.value) + '&t=' + new Date().getTime())
+    .then(r => r.text())
+    .then(gb => {
         spinner.style.display = 'none';
-        btnTxt.innerText = "Check";
-        resBox.style.display = 'block';
-
-        if (data.error) {
-            resBox.style.background = 'rgba(239,68,68,0.2)';
-            resTxt.innerHTML = '⚠️ ' + data.error;
+        btnCheck.disabled = false;
+        
+        let val = parseFloat(gb);
+        if (!isNaN(val)) {
+            btnTxt.innerText = gb + " GB";
+            btnCheck.style.background = (val < 1) ? '#f87171' : '#22c55e';
         } else {
-            resBox.style.background = 'rgba(34,197,94,0.1)';
-            const colorClass = (data.left_gb === '∞' || parseFloat(data.left_gb) < 1 || data.expired) ? 'stat-red' : 'stat-green';
-            resTxt.innerHTML = `Data: <span class="stat-val ${colorClass}">${data.left_gb} GB</span> | Time: <span class="stat-val ${colorClass}">${data.time_left}</span>`;
+            btnTxt.innerText = "Error";
+            btnCheck.style.background = '#f87171';
         }
     })
     .catch(error => {
         spinner.style.display = 'none';
-        btnTxt.innerText = "Retry";
-        alert("Network Error");
+        btnCheck.disabled = false;
+        btnTxt.innerText = "Error";
+        btnCheck.style.background = '#f87171';
     });
 }
 </script>
