@@ -488,8 +488,11 @@ if (isset($_GET['share'])) {
             error_reporting(0); // Suppress any warnings from breaking Base64 purity
             $exportConfigs = $targetGroup['configs'];
 
+            // Always set a clean profile title for clients like Hiddify to prevent `%20` in names
+            header("profile-title: " . SERIES_NAME . " " . $targetGroup['name']);
+
+            // Only add the detailed stats headers if the conditions are met
             if (!$targetGroup['free'] && empty($targetGroup['hide_stats'])) {
-                header("profile-title: " . SERIES_NAME . " " . $targetGroup['name']);
                 $headerParts = ["upload=0"];
 
                 // Hiddify header logic
@@ -537,7 +540,7 @@ if (isset($_GET['share'])) {
 
                 header("Subscription-Userinfo: " . implode("; ", $headerParts));
             }
-            // If hide_stats or free is true, we intentionally DO NOT set 'Subscription-Userinfo' or 'profile-title'
+            // If hide_stats or free is true, we intentionally DO NOT set 'Subscription-Userinfo'
 
             // Clean configs to ensure Hiddify doesn't error out on \r\n or empty strings
             $cleanExport =[];
@@ -1805,7 +1808,6 @@ function toggleAddFreeConfig() {
     const noTimeCheckbox = document.getElementById('config_notime_add');
     const hideStatsCheckbox = document.getElementById('config_hide_stats_add');
     const quotaWrapper = document.getElementById('add_quota_wrapper');
-    const statsUrlInput = document.getElementById('config_info_add');
     const statsUrlRow = document.getElementById('add_info_row');
 
     // Password field
@@ -1829,7 +1831,10 @@ function toggleAddFreeConfig() {
     
     // Stats URL Section (hide the whole row)
     statsUrlRow.style.display = isFree ? 'none' : 'flex';
-    if(statsUrlInput) statsUrlInput.value = '';
+    if (statsUrlRow) {
+        const statsUrlInput = statsUrlRow.querySelector('#config_info_add');
+        if (statsUrlInput) statsUrlInput.value = '';
+    }
 }
 
 
