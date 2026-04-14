@@ -125,7 +125,8 @@ function get_database_groups() {
     $currentNote = '';
     $currentInfo = ''; 
     $currentType = 'auto'; 
-    $currentExclude = false;
+    $currentIncludedBy = [];
+    $currentSharedWith = [];
     $currentFree = false; 
     $currentHideStats = false;
     $currentOwner = '';
@@ -134,8 +135,9 @@ function get_database_groups() {
     $currentQuota = 0;
     $currentConfigs =[];
     $needsSave = false;
+    $legacyInclude = false;
 
-    $finalizeGroup = function() use (&$groups, &$currentName, &$currentUUID, &$currentPass, &$currentNote, &$currentInfo, &$currentType, &$currentExclude, &$currentFree, &$currentHideStats, &$currentOwner, &$currentExpireDate, &$currentNoTimeLimit, &$currentQuota, &$currentConfigs, &$needsSave) {
+    $finalizeGroup = function() use (&$groups, &$currentName, &$currentUUID, &$currentPass, &$currentNote, &$currentInfo, &$currentType, &$currentIncludedBy, &$currentSharedWith, &$currentFree, &$currentHideStats, &$currentOwner, &$currentExpireDate, &$currentNoTimeLimit, &$currentQuota, &$currentConfigs, &$needsSave, &$legacyInclude) {
         if (!empty($currentConfigs)) {
             if (empty($currentUUID)) {
                 $currentUUID = uniqid(); 
@@ -145,6 +147,16 @@ function get_database_groups() {
                 $currentPass = '1234'; 
                 $needsSave = true;
             }
+            
+            // Legacy Migration: Convert old #EXCLUDE to #INCLUDED_BY
+            if ($legacyInclude) {
+                $ownerToInclude = $currentOwner ?: MAIN_ADMIN_UUID;
+                if (!in_array($ownerToInclude, $currentIncludedBy)) {
+                    $currentIncludedBy[] = $ownerToInclude;
+                }
+                $needsSave = true;
+            }
+
             $groups[] =[
                 'uuid' => $currentUUID,
                 'name' => $currentName ?: 'Config ' . (count($groups) + 1),
@@ -152,7 +164,8 @@ function get_database_groups() {
                 'note' => $currentNote,
                 'info' => $currentInfo,
                 'type' => $currentType,
-                'exclude' => $currentExclude,
+                'included_by' => array_values(array_unique($currentIncludedBy)),
+                'shared_with' => array_values(array_unique($currentSharedWith)),
                 'free' => $currentFree,
                 'hide_stats' => $currentHideStats,
                 'owner' => $currentOwner, 
@@ -168,7 +181,8 @@ function get_database_groups() {
         $currentNote = '';
         $currentInfo = '';
         $currentType = 'auto';
-        $currentExclude = false;
+        $currentIncludedBy = [];
+        $currentSharedWith = [];
         $currentFree = false; 
         $currentHideStats = false;
         $currentOwner = ''; 
@@ -176,6 +190,7 @@ function get_database_groups() {
         $currentNoTimeLimit = false;
         $currentQuota = 0;
         $currentConfigs =[];
+        $legacyInclude = false;
     };
 
     foreach ($lines as $line) {
@@ -193,8 +208,15 @@ function get_database_groups() {
             $currentInfo = trim(substr($line, 7));
         } elseif (strpos($line, '#TYPE: ') === 0) {
             $currentType = trim(substr($line, 7));
+        } elseif (strpos($line, '#INCLUDED_BY: ') === 0) {
+            $val = trim(substr($line, 14));
+            $currentIncludedBy = $val ? explode(',', $val) : [];
+        } elseif (strpos($line, '#SHARED_WITH: ') === 0) {
+            $val = trim(substr($line, 14));
+            $currentSharedWith = $val ? explode(',', $val) : [];
         } elseif (strpos($line, '#EXCLUDE: ') === 0) {
-            $currentExclude = trim(substr($line, 10)) === 'true';
+            // Support legacy flag parsing to migrate to INCLUDED_BY
+            $legacyInclude = trim(substr($line, 10)) === 'false';
         } elseif (strpos($line, '#FREE: ') === 0) { 
             $currentFree = trim(substr($line, 7)) === 'true';
         } elseif (strpos($line, '#HIDESTATS: ') === 0) { 
@@ -229,7 +251,12 @@ function save_database_groups($groups) {
         if (!empty($group['note'])) $output[] = "#NOTE: " . $group['note'];
         if (!empty($group['info'])) $output[] = "#INFO: " . $group['info'];
         if (!empty($group['type'])) $output[] = "#TYPE: " . $group['type']; 
-        $output[] = "#EXCLUDE: " . ($group['exclude'] ? 'true' : 'false');
+        
+        $output[] = "#INCLUDED_BY: " . implode(',', $group['included_by'] ?? []);
+        if (!empty($group['shared_with'])) {
+            $output[] = "#SHARED_WITH: " . implode(',', $group['shared_with']);
+        }
+        
         $output[] = "#FREE: " . ($group['free'] ? 'true' : 'false');
         $output[] = "#HIDESTATS: " . (!empty($group['hide_stats']) ? 'true' : 'false');
         if (!empty($group['owner'])) $output[] = "#OWNER: " . $group['owner'];
@@ -349,7 +376,8 @@ if (isset($_GET['free_configs'])) {
                 'note' => trim($_POST['config_note']),
                 'info' => trim($_POST['config_info']),
                 'type' => 'auto',
-                'exclude' => false,
+                'included_by' => [], // Default empty inclusion
+                'shared_with' => [],
                 'free' => true,
                 'hide_stats' => false,
                 'owner' => '',
@@ -487,7 +515,7 @@ if (isset($_GET['share'])) {
         if (isset($_GET['sub']) && $_GET['sub'] === '1') {
             error_reporting(0); // Suppress any warnings from breaking Base64 purity
             $exportConfigs = $targetGroup['configs'];
-
+            
             // Always set a clean profile title for clients like Hiddify to prevent `%20` in names
             header("profile-title: " . SERIES_NAME . " " . $targetGroup['name']);
 
@@ -920,83 +948,85 @@ exit;
 }
 
 /* ================= 2. SUBSCRIPTION VIEW LOGIC ================= */
-if ($is_authenticated_sub && (!isset($_GET['sub']) || $_GET['sub'] !== '1')) {
-    $sub_error = '';
-    if (isset($_POST['unlock_key']) && !secure_compare($_POST['unlock_key'], MAIN_ADMIN_PASSWORD)) {
-        $sub_error = "Invalid Key";
-    }
-
-    if (isset($_POST['unlock_key']) && secure_compare($_POST['unlock_key'], MAIN_ADMIN_PASSWORD)) {
-        header("Location: ?sub=1&pass=" . MAIN_ADMIN_PASSWORD);
-        exit;
-    }
-    
-    $reqOwner = $_GET['owner'] ?? '';
-    if (!empty($reqOwner) && $reqOwner !== MAIN_ADMIN_UUID) {
-        $admins = get_admin_users();
-        $admin_pass_for_sub = '';
-        foreach($admins as $admin) {
-            if ($admin['uuid'] === $reqOwner) {
-                $admin_pass_for_sub = $admin['password'];
-                break;
-            }
+if (isset($_GET['sub']) && $_GET['sub'] === '1') {
+    if (!$is_authenticated_sub) {
+        // Fallback for direct sub link access without password
+        $sub_error = '';
+        if (isset($_POST['unlock_key']) && !secure_compare($_POST['unlock_key'], MAIN_ADMIN_PASSWORD)) {
+            $sub_error = "Invalid Key";
         }
-        if (!empty($admin_pass_for_sub) && isset($_POST['unlock_key']) && secure_compare($_POST['unlock_key'], $admin_pass_for_sub)) {
-            header("Location: ?sub=1&pass=" . urlencode($admin_pass_for_sub) . "&owner=" . urlencode($reqOwner));
+
+        if (isset($_POST['unlock_key']) && secure_compare($_POST['unlock_key'], MAIN_ADMIN_PASSWORD)) {
+            header("Location: ?sub=1&pass=" . MAIN_ADMIN_PASSWORD);
             exit;
         }
+        
+        $reqOwner = $_GET['owner'] ?? '';
+        if (!empty($reqOwner) && $reqOwner !== MAIN_ADMIN_UUID) {
+            $admins = get_admin_users();
+            $admin_pass_for_sub = '';
+            foreach($admins as $admin) {
+                if ($admin['uuid'] === $reqOwner) {
+                    $admin_pass_for_sub = $admin['password'];
+                    break;
+                }
+            }
+            if (!empty($admin_pass_for_sub) && isset($_POST['unlock_key']) && secure_compare($_POST['unlock_key'], $admin_pass_for_sub)) {
+                header("Location: ?sub=1&pass=" . urlencode($admin_pass_for_sub) . "&owner=" . urlencode($reqOwner));
+                exit;
+            }
+        }
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Unlock Configs</title>
+    <style>
+        body{min-height:100vh;background:linear-gradient(135deg, #0c0c1a 0%, #1a0d2e 50%, #0f172a 100%);color:#e2e8f0;font-family:'Segoe UI',-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow-x:hidden;margin:0;}
+        body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;background:radial-gradient(circle at 50% 50%, rgba(34,197,94,0.1) 0%, transparent 60%);pointer-events:none;z-index:-1;}
+        .card{background:linear-gradient(145deg, rgba(15,23,42,0.95), rgba(30,41,59,0.75));backdrop-filter:blur(25px);border:1px solid rgba(34,197,94,0.2);border-radius:24px;padding:30px;width:100%;max-width:400px;box-shadow:0 30px 60px rgba(0,0,0,0.5);text-align:center;}
+        h2{background:linear-gradient(135deg, #22c55e, #4ade80);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:24px;margin:0 0 20px 0;font-weight:800;}
+        input{width:100%;background:rgba(4,8,20,0.6);border:1px solid rgba(59,130,246,0.3);border-radius:16px;padding:14px;color:white;font-size:15px;margin-bottom:15px;text-align:center;outline:none;transition:0.3s; box-sizing:border-box;}
+        input:focus{border-color:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,0.15);}
+        button{width:100%;padding:14px;border:none;border-radius:16px;background:linear-gradient(135deg, #22c55e, #16a34a);color:white;font-weight:bold;font-size:15px;cursor:pointer;transition:0.3s;margin-bottom:10px;}
+        button:hover{transform:translateY(-2px);box-shadow:0 15px 40px rgba(34,197,94,0.4);}
+        .error{color:#ef4444;background:rgba(239,68,68,0.1);margin-bottom:15px;padding:10px;border-radius:8px;font-weight:bold;}
+    </style>
+    </head>
+    <body>
+    <div class="card">
+    <h2>Enter Access Key</h2>
+    <?php if (!empty($sub_error)) echo "<div class='error'>$sub_error</div>"; ?>
+    <form method="post">
+    <input type="password" name="unlock_key" placeholder="Password" required autofocus>
+    <button type="submit" name="access_sub">Unlock</button>
+    </form>
+    </div>
+    </body>
+    </html>
+    <?php
+    exit;
     }
-?>
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Unlock Configs</title>
-<style>
-body{background:#0f172a;color:white;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
-.login-box{background:rgba(0,0,0,0.3);padding:30px;border-radius:12px;width:300px;text-align:center;}
-input{width:100%;padding:12px;margin-bottom:15px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:white;}
-button{width:100%;padding:12px;border:none;background:#22c55e;color:white;font-weight:bold;border-radius:8px;cursor:pointer;}
-.error{color:#ef4444;margin-bottom:15px;}
-</style>
-</head>
-<body>
-<div class="login-box">
-<h3>Enter Access Key</h3>
-<?php if (!empty($sub_error)) echo "<div class='error'>$sub_error</div>"; ?>
-<form method="post">
-<input type="password" name="unlock_key" placeholder="Enter Access Key" required autofocus>
-<button type="submit" name="access_sub">Unlock Configs</button>
-</form>
-</div>
-</body>
-</html>
-<?php
-exit;
-}
-
-if ($is_authenticated_sub && isset($_GET['sub']) && $_GET['sub'] === '1') {
+    
     header("Content-Type: text/html; charset=utf-8");
     $allGroups = get_database_groups();
     $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $base  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
     $reqOwner = $_GET['owner'] ?? '';
+    
+    $targetOwner = !empty($reqOwner) ? $reqOwner : MAIN_ADMIN_UUID;
     $groups =[];
 
-    if (empty($reqOwner) || $reqOwner === MAIN_ADMIN_UUID) {
-        // Main Admin: see all configs not assigned to other admins
-        foreach($allGroups as $group) {
-            if (empty($group['owner']) || $group['owner'] === MAIN_ADMIN_UUID) {
-                $groups[] = $group;
-            }
-        }
-    } else {
-        // Sub Admin: see only their own configs
-        foreach ($allGroups as $group) {
-            if (($group['owner'] ?? '') === $reqOwner) {
-                $groups[] = $group;
-            }
+    foreach ($allGroups as $group) {
+        $isOwner = ($group['owner'] ?? '') === $targetOwner;
+        $isSharedAll = in_array('ALL', $group['shared_with'] ?? []);
+        $isSharedWithMe = in_array($targetOwner, $group['shared_with'] ?? []);
+        $isMainAdmin = ($targetOwner === MAIN_ADMIN_UUID);
+
+        if ($isMainAdmin || $isOwner || $isSharedAll || $isSharedWithMe) {
+            $groups[] = $group;
         }
     }
     ?>
@@ -1129,17 +1159,11 @@ if ($is_authenticated_sub) {
     $cleanLines =[];
     $allGroups = get_database_groups();
     $reqOwner = $_GET['owner'] ?? '';
+    
+    $targetOwner = !empty($reqOwner) ? $reqOwner : MAIN_ADMIN_UUID;
 
     foreach ($allGroups as $group) {
-        $ownerMatches = false;
-        if (!empty($reqOwner)) {
-            $ownerMatches = (($group['owner'] ?? '') === $reqOwner);
-        } else {
-            // Main admin sees their own + unassigned
-            $ownerMatches = (empty($group['owner']) || $group['owner'] === MAIN_ADMIN_UUID);
-        }
-
-        if ($ownerMatches && !$group['exclude']) {
+        if (in_array($targetOwner, $group['included_by'] ?? [])) {
             foreach ($group['configs'] as $cfg) {
                 $cfg = trim($cfg);
                 if (!empty($cfg)) {
@@ -1203,16 +1227,19 @@ if (!$isAdminLoggedIn) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin Login</title>
 <style>
-body{background:#0f172a;color:white;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
-.login-box{background:rgba(0,0,0,0.3);padding:30px;border-radius:12px;width:300px;text-align:center;}
-h2{color:#4ade80;margin-bottom:20px;}
-input{width:100%;box-sizing:border-box;padding:12px;margin-bottom:15px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:white;}
-button{width:100%;padding:12px;border:none;background:#22c55e;color:white;font-weight:bold;border-radius:8px;cursor:pointer;}
-.error{color:#ef4444;margin-bottom:15px;background:rgba(239,68,68,0.1);padding:10px;border-radius:8px;}
+    body{min-height:100vh;background:linear-gradient(135deg, #0c0c1a 0%, #1a0d2e 50%, #0f172a 100%);color:#e2e8f0;font-family:'Segoe UI',-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow-x:hidden;margin:0;}
+    body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;background:radial-gradient(circle at 50% 50%, rgba(34,197,94,0.1) 0%, transparent 60%);pointer-events:none;z-index:-1;}
+    .card{background:linear-gradient(145deg, rgba(15,23,42,0.95), rgba(30,41,59,0.75));backdrop-filter:blur(25px);border:1px solid rgba(34,197,94,0.2);border-radius:24px;padding:30px;width:100%;max-width:400px;box-shadow:0 30px 60px rgba(0,0,0,0.5);text-align:center;}
+    h2{background:linear-gradient(135deg, #22c55e, #4ade80);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:24px;margin:0 0 20px 0;font-weight:800;}
+    input{width:100%;background:rgba(4,8,20,0.6);border:1px solid rgba(59,130,246,0.3);border-radius:16px;padding:14px;color:white;font-size:15px;margin-bottom:15px;text-align:center;outline:none;transition:0.3s; box-sizing:border-box;}
+    input:focus{border-color:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,0.15);}
+    button{width:100%;padding:14px;border:none;border-radius:16px;background:linear-gradient(135deg, #22c55e, #16a34a);color:white;font-weight:bold;font-size:15px;cursor:pointer;transition:0.3s;margin-bottom:10px;}
+    button:hover{transform:translateY(-2px);box-shadow:0 15px 40px rgba(34,197,94,0.4);}
+    .error{color:#ef4444;background:rgba(239,68,68,0.1);margin-bottom:15px;padding:10px;border-radius:8px;font-weight:bold;}
 </style>
 </head>
 <body>
-<div class="login-box">
+<div class="card">
 <h2>Admin Panel</h2>
 <?php if (isset($admin_error)) echo "<div class='error'>❌ $admin_error</div>"; ?>
 <form method="post">
@@ -1295,6 +1322,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
 
             $expireDate = $noTime ? 0 : time() + ($days * 86400);
 
+            $included_by = [];
+            if (isset($_POST['config_include_add'])) {
+                $included_by[] = $currentAdmin['uuid'];
+            }
+
+            $shared_with = [];
+            if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID && isset($_POST['config_share_add'])) {
+                $shareInput = trim($_POST['config_share_usernames_add'] ?? '');
+                if ($shareInput === '') {
+                    $shared_with = ['ALL'];
+                } else {
+                    $allAdmins = get_admin_users();
+                    $adminUsernameToUuid = [];
+                    foreach ($allAdmins as $adm) {
+                        $adminUsernameToUuid[strtolower($adm['username'])] = $adm['uuid'];
+                    }
+                    $unames = preg_split('/[\s,]+/', $shareInput);
+                    foreach ($unames as $u) {
+                        $u = strtolower(trim($u));
+                        if (isset($adminUsernameToUuid[$u])) {
+                            $shared_with[] = $adminUsernameToUuid[$u];
+                        }
+                    }
+                    $shared_with = array_values(array_unique($shared_with));
+                }
+            }
+
             $groups[] =[
                 'uuid' => uniqid(),
                 'name' => trim($_POST['config_name']) ?: 'Config ' . (count($groups) + 1),
@@ -1302,7 +1356,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                 'note' => trim($_POST['config_note']),
                 'info' => $info,
                 'type' => 'auto',
-                'exclude' => isset($_POST['config_exclude_add']),
+                'included_by' => $included_by,
+                'shared_with' => $shared_with,
                 'free' => $isFree,
                 'hide_stats' => $hideStats,
                 'owner' => $currentAdmin['uuid'] ?? '',
@@ -1328,16 +1383,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
 
     if (isset($_POST['updates'])) {
         $needsSave = false;
+        
+        $allAdmins = get_admin_users();
+        $adminUsernameToUuid = [];
+        foreach ($allAdmins as $adm) {
+            $adminUsernameToUuid[strtolower($adm['username'])] = $adm['uuid'];
+        }
+
         foreach ($groups as &$group) {
             if (isset($_POST['updates'][$group['uuid']])) {
-                if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID || ($group['owner'] ?? '') === $currentAdmin['uuid']) {
+                $isOwner = ($group['owner'] ?? '') === $currentAdmin['uuid'];
+                $isMainAdmin = $currentAdmin['uuid'] === MAIN_ADMIN_UUID;
+                $isSharedAll = in_array('ALL', $group['shared_with'] ?? []);
+                $isSharedWithMe = in_array($currentAdmin['uuid'], $group['shared_with'] ?? []);
+
+                // Only allow edits if owner, main admin, or explicitly shared with this sub-admin
+                if ($isMainAdmin || $isOwner || $isSharedAll || $isSharedWithMe) {
                     $data = $_POST['updates'][$group['uuid']];
 
                     $group['name'] = trim($data['name']);
                     if(isset($data['note'])) $group['note'] = trim($data['note']);
                     if(isset($data['info'])) $group['info'] = trim($data['info']);
                     
-                    $group['exclude'] = isset($data['exclude']);
+                    // Handle per-admin inclusion
+                    if (isset($data['include'])) {
+                        if (!in_array($currentAdmin['uuid'], $group['included_by'] ?? [])) {
+                            $group['included_by'][] = $currentAdmin['uuid'];
+                        }
+                    } else {
+                        if (($key = array_search($currentAdmin['uuid'], $group['included_by'] ?? [])) !== false) {
+                            unset($group['included_by'][$key]);
+                        }
+                    }
+                    $group['included_by'] = array_values(array_unique($group['included_by'] ?? []));
+
+                    // Handle Sharing (ONLY Main Admin can change sharing settings)
+                    if ($isMainAdmin) {
+                        if (isset($data['share_group'])) {
+                            $shareInput = trim($data['share_usernames'] ?? '');
+                            if ($shareInput === '') {
+                                $group['shared_with'] = ['ALL'];
+                            } else {
+                                $sharedUuids = [];
+                                $unames = preg_split('/[\s,]+/', $shareInput);
+                                foreach ($unames as $u) {
+                                    $u = strtolower(trim($u));
+                                    if (isset($adminUsernameToUuid[$u])) {
+                                        $sharedUuids[] = $adminUsernameToUuid[$u];
+                                    }
+                                }
+                                $group['shared_with'] = array_values(array_unique($sharedUuids));
+                            }
+                        } else {
+                            $group['shared_with'] = [];
+                        }
+                    }
+
                     $group['free'] = isset($data['free']);
                     $group['hide_stats'] = isset($data['hide_stats']);
                     $group['no_time_limit'] = isset($data['notime']);
@@ -1347,7 +1448,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                     if (!$group['no_time_limit']) {
                         $old_days = (int)($data['old_days'] ?? 0);
                         $new_days = (int)($data['days'] ?? 0);
-                        // Only overwrite the expire_date if the admin explicitly changed the days remaining
                         if ($new_days !== $old_days) {
                             $group['expire_date'] = time() + ($new_days * 86400);
                         }
@@ -1356,7 +1456,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                     }
 
                     if ($group['free']) {
-                        $group['pass'] = ''; // Ensure free configs don't store passwords
+                        $group['pass'] = '';
                         $group['no_time_limit'] = true;
                         $group['hide_stats'] = true;
                         $group['expire_date'] = 0;
@@ -1367,7 +1467,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                             $group['pass'] = trim($data['pass']);
                         }
                         if (empty($group['pass'])) {
-                            $group['pass'] = '1234'; // Ensure paid configs always have a password
+                            $group['pass'] = '1234'; 
                         }
                     }
 
@@ -1435,7 +1535,7 @@ transition: all 0.3s ease;
 
 /* Active Config Highlight */
 .card.active-config {
-border: 1px solid rgba(234, 179, 8, 0.6);
+border-color: rgba(234, 179, 8, 0.6);
 box-shadow: 0 20px 40px rgba(234, 179, 8, 0.15);
 }
 
@@ -1489,7 +1589,7 @@ flex:1; display:flex; align-items:center; justify-content:center; color:white;
 /* Beautiful Checkbox UI */
 .checkbox-container {
 display: flex;
-flex-wrap: nowrap;
+flex-wrap: wrap;
 align-items: center;
 gap: 20px;
 background: rgba(255,255,255,0.05);
@@ -1581,19 +1681,29 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
     $groups = $allGroups;
 } else {
     foreach ($allGroups as $group) {
-        if (($group['owner'] ?? '') === $currentAdmin['uuid']) {
+        $isOwner = ($group['owner'] ?? '') === $currentAdmin['uuid'];
+        $isSharedAll = in_array('ALL', $group['shared_with'] ?? []);
+        $isSharedWithMe = in_array($currentAdmin['uuid'], $group['shared_with'] ?? []);
+
+        if ($isOwner || $isSharedAll || $isSharedWithMe) {
             $groups[] = $group;
         }
     }
 }
 
 $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$base  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
+$base  = rtrim(dirname($_SERVER['PHP_SELF']), '/');
 $adminSubPass = $currentAdmin['password'] ?? MAIN_ADMIN_PASSWORD;
 $adminSubUUID = $currentAdmin['uuid'] ?? MAIN_ADMIN_UUID;
 
 // Sub link defaults directly to Base64 Raw Output (WITHOUT &sub=1) for universal app import
-$subLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/index.php?pass='.urlencode($adminSubPass) . '&owner=' . urlencode($adminSubUUID) . '#' . TAG_NAME;
+$subLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/?pass='.urlencode($adminSubPass) . '&owner=' . urlencode($adminSubUUID) . '#' . TAG_NAME;
+
+$allAdmins = get_admin_users();
+$adminNames =[];
+foreach ($allAdmins as $admin) {
+    $adminNames[$admin['uuid']] = $admin['username'];
+}
 ?>
 
 <?php 
@@ -1601,11 +1711,10 @@ $subLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/index.php?pass='.urlencode
 // Admin Management Section - ONLY FOR MAIN ADMIN
 // ---------------------------------------------------------
 if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
-    $admins = get_admin_users();
 ?>
 <div class="card">
     <h3 style="margin-bottom:15px;color:#f59e0b;">👥 Admin Users</h3>
-    <?php foreach ($admins as $admin): 
+    <?php foreach ($allAdmins as $admin): 
         if ($admin['uuid'] === MAIN_ADMIN_UUID) continue; 
     ?>
     <form method="post" class="info-row admin-row" style="margin-bottom:15px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:15px;">
@@ -1630,7 +1739,7 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
 <?php } ?>
 
 <!-- ADD NEW CONFIG CARD -->
-<div class="card">
+<div class="card" id="add_new_card">
     <h3 style="margin-bottom:15px;color:#3b82f6;">➕ Add New Config</h3>
     <form method="post">
         <div class="row-inputs">
@@ -1660,8 +1769,8 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
                 <span>No Time Limit</span>
             </label>
             <label class="checkbox-item">
-                <input type="checkbox" name="config_exclude_add" id="config_exclude_add">
-                <span>Exclude from My Sub</span>
+                <input type="checkbox" name="config_include_add" id="config_include_add" onchange="toggleAddIncludeBorder()">
+                <span>Include in My Sub</span>
             </label>
             <label class="checkbox-item">
                 <input type="checkbox" name="config_free_add" id="config_free_add" onchange="toggleAddFreeConfig()">
@@ -1671,7 +1780,19 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
                 <input type="checkbox" name="config_hide_stats_add" id="config_hide_stats_add">
                 <span>Hide Stats</span>
             </label>
+            <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
+            <label class="checkbox-item">
+                <input type="checkbox" name="config_share_add" id="config_share_add" onchange="toggleShareAdd()">
+                <span>Share Group</span>
+            </label>
+            <?php endif; ?>
         </div>
+
+        <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
+        <div class="info-row" id="share_usernames_wrapper_add" style="display:none; margin-bottom:15px;">
+            <input type="text" name="config_share_usernames_add" placeholder="Admin usernames (comma separated). Leave empty for ALL sub-admins." class="info-input" style="border-color:rgba(245,158,11,0.4);">
+        </div>
+        <?php endif; ?>
 
         <textarea name="config" rows="3" placeholder="Paste multiple vmess:// vless:// configs here, one per line..." style="margin-bottom:15px;"></textarea>
 
@@ -1683,12 +1804,6 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
 <form method="post" id="update_form" style="margin-bottom:40px;">
 
 <?php
-$allAdmins = get_admin_users();
-$adminNames =[];
-foreach ($allAdmins as $admin) {
-    $adminNames[$admin['uuid']] = $admin['username'];
-}
-
 foreach ($groups as $i => $group): 
     $fullConfig = implode("\n", $group['configs']);
     $shareLink = $proto.'://'.$_SERVER['HTTP_HOST'].$base.'/index.php?share='.urlencode($group['uuid']) . (!empty($group['owner']) ? '&owner=' . urlencode($group['owner']) : '') . '#' . TAG_NAME;
@@ -1697,8 +1812,20 @@ foreach ($groups as $i => $group):
     if (!empty($group['owner']) && $group['owner'] !== MAIN_ADMIN_UUID && isset($adminNames[$group['owner']])) {
         $ownerName = htmlspecialchars($adminNames[$group['owner']]);
     }
+    
+    $isIncludedByMe = in_array($currentAdmin['uuid'], $group['included_by'] ?? []);
+    $isShared = !empty($group['shared_with']);
+    
+    $sharedUsernamesStr = '';
+    if ($isShared && !in_array('ALL', $group['shared_with'])) {
+        $uNames = [];
+        foreach ($group['shared_with'] as $suid) {
+            if (isset($adminNames[$suid])) $uNames[] = $adminNames[$suid];
+        }
+        $sharedUsernamesStr = implode(', ', $uNames);
+    }
 ?>
-<div class="card <?= !$group['exclude'] ? 'active-config' : '' ?>">
+<div class="card <?= $isIncludedByMe ? 'active-config' : '' ?>" id="card_<?= $i ?>">
     <input type="hidden" name="updates[<?= $group['uuid'] ?>][uuid_marker]" value="1">
     <div class="row-inputs">
         <div style="flex:2;position:relative;">
@@ -1707,6 +1834,8 @@ foreach ($groups as $i => $group):
                    style="padding-left:35px;font-weight:bold;color:#4ade80;" maxlength="100">
             <?php if (!empty($ownerName)): ?>
                 <span style="position:absolute;right:10px;top:12px;font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.1);padding:3px 8px;border-radius:8px;"><?= $ownerName ?></span>
+            <?php elseif ($isShared && $currentAdmin['uuid'] !== MAIN_ADMIN_UUID): ?>
+                <span style="position:absolute;right:10px;top:12px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,0.1);padding:3px 8px;border-radius:8px;">Shared</span>
             <?php endif; ?>
         </div>
         <div style="flex:1;position:relative;">
@@ -1756,8 +1885,8 @@ foreach ($groups as $i => $group):
             <span>No Time Limit</span>
         </label>
         <label class="checkbox-item">
-            <input type="checkbox" name="updates[<?= $group['uuid'] ?>][exclude]" id="exclude_<?= $i ?>" <?= $group['exclude'] ? 'checked' : '' ?>>
-            <span>Exclude from My Sub</span>
+            <input type="checkbox" name="updates[<?= $group['uuid'] ?>][include]" id="include_<?= $i ?>" <?= $isIncludedByMe ? 'checked' : '' ?> onchange="toggleIncludeBorder(<?= $i ?>)">
+            <span>Include in My Sub</span>
         </label>
         <label class="checkbox-item">
             <input type="checkbox" name="updates[<?= $group['uuid'] ?>][free]" id="free_<?= $i ?>" <?= $group['free'] ? 'checked' : '' ?> onchange="toggleEditFreeConfig(<?= $i ?>)">
@@ -1767,7 +1896,19 @@ foreach ($groups as $i => $group):
             <input type="checkbox" name="updates[<?= $group['uuid'] ?>][hide_stats]" id="hide_stats_<?= $i ?>" <?= !empty($group['hide_stats']) ? 'checked' : '' ?>>
             <span>Hide Stats</span>
         </label>
+        <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
+        <label class="checkbox-item">
+            <input type="checkbox" name="updates[<?= $group['uuid'] ?>][share_group]" id="share_<?= $i ?>" <?= $isShared ? 'checked' : '' ?> onchange="toggleShareEdit(<?= $i ?>)">
+            <span>Share Group</span>
+        </label>
+        <?php endif; ?>
     </div>
+
+    <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
+    <div class="info-row" id="share_wrapper_<?= $i ?>" style="<?= $isShared ? '' : 'display:none;' ?> margin-bottom:15px;">
+        <input type="text" name="updates[<?= $group['uuid'] ?>][share_usernames]" value="<?= htmlspecialchars($sharedUsernamesStr) ?>" placeholder="Admin usernames (comma separated). Leave empty for ALL sub-admins." class="info-input" style="border-color:rgba(245,158,11,0.4);">
+    </div>
+    <?php endif; ?>
 
     <textarea name="updates[<?= $group['uuid'] ?>][configs]" class="config-preview" style="height:150px;width:100%;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:15px;color:#94a3b8;font-family:'JetBrains Mono',monospace;font-size:12px;resize:vertical;"><?= htmlspecialchars($fullConfig) ?></textarea>
 
@@ -1775,7 +1916,9 @@ foreach ($groups as $i => $group):
         <button type="button" class="btn btn-secondary" onclick="copyText(decodeURIComponent('<?= rawurlencode($fullConfig) ?>'), this)">📋 Copy Config</button>
         <button type="button" class="btn btn-warning" onclick="copyText('<?= addslashes($shareLink) ?>', this)">🔗 Share Link</button>
         <button type="submit" name="updates[<?= $group['uuid'] ?>][save]" class="btn btn-primary">💾 Save Modifications</button>
+        <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID || ($group['owner'] ?? '') === $currentAdmin['uuid']): ?>
         <button type="button" class="btn btn-danger" onclick="confirmDelete('<?= $group['uuid'] ?>')">🗑️ Delete</button>
+        <?php endif; ?>
     </div>
 </div>
 <?php endforeach; ?>
@@ -1800,6 +1943,37 @@ foreach ($groups as $i => $group):
 </div>
 
 <script>
+function toggleIncludeBorder(index) {
+    const isIncluded = document.getElementById('include_' + index).checked;
+    const card = document.getElementById('card_' + index);
+    if (isIncluded) {
+        card.classList.add('active-config');
+    } else {
+        card.classList.remove('active-config');
+    }
+}
+function toggleAddIncludeBorder() {
+    const isIncluded = document.getElementById('config_include_add').checked;
+    const card = document.getElementById('add_new_card');
+    if (isIncluded) {
+        card.classList.add('active-config');
+    } else {
+        card.classList.remove('active-config');
+    }
+}
+
+function toggleShareAdd() {
+    const isChecked = document.getElementById('config_share_add').checked;
+    const wrapper = document.getElementById('share_usernames_wrapper_add');
+    if (wrapper) wrapper.style.display = isChecked ? 'flex' : 'none';
+}
+
+function toggleShareEdit(index) {
+    const isChecked = document.getElementById('share_' + index).checked;
+    const wrapper = document.getElementById('share_wrapper_' + index);
+    if (wrapper) wrapper.style.display = isChecked ? 'flex' : 'none';
+}
+
 function toggleAddFreeConfig() {
     const isFree = document.getElementById('config_free_add').checked;
     
