@@ -605,7 +605,10 @@ if (isset($_GET['share'])) {
         }
     }
 
-    if (isset($_SESSION[$sessionKey]) && $_SESSION[$sessionKey] === true && isset($_POST['update_config_pass'])) {
+    // Is Unlocked check moved UP so POST requests for free configs work immediately
+    $isUnlocked = (isset($_SESSION[$sessionKey]) && $_SESSION[$sessionKey] === true) || !empty($targetGroup['free']);
+
+    if ($isUnlocked && empty($targetGroup['free']) && isset($_POST['update_config_pass'])) {
         $newPass = trim($_POST['new_pass']);
         if (strlen($newPass) > 0) {
             $groups[$targetIndex]['pass'] = $newPass;
@@ -617,7 +620,7 @@ if (isset($_GET['share'])) {
         }
     }
 
-    if (isset($_SESSION[$sessionKey]) && $_SESSION[$sessionKey] === true && isset($_POST['delete_config_val'])) {
+    if ($isUnlocked && isset($_POST['delete_config_val'])) {
         $valToDelete = trim($_POST['delete_config_val']);
         $newConfigs =[];
         foreach ($targetGroup['configs'] as $cfg) {
@@ -630,7 +633,7 @@ if (isset($_GET['share'])) {
         $targetGroup['configs'] = $newConfigs;
     }
 
-    if (isset($_SESSION[$sessionKey]) && $_SESSION[$sessionKey] === true && isset($_POST['new_configs'])) {
+    if ($isUnlocked && isset($_POST['new_configs'])) {
         $raw = $_POST['new_configs'];
         $lines = preg_split("/\r\n|\n|\r/", $raw);
         $added = false;
@@ -643,11 +646,6 @@ if (isset($_GET['share'])) {
             }
         }
         if ($added) save_database_groups($groups);
-    }
-
-    $isUnlocked = isset($_SESSION[$sessionKey]) && $_SESSION[$sessionKey] === true;
-    if ($targetGroup['free']) {
-        $isUnlocked = true;
     }
 
     // Pre-calculate Time String for User Page View
@@ -790,8 +788,9 @@ animation: spin 1s linear infinite; display: none;
                 $subUrl = $baseUrl . '?share=' . urlencode($targetGroup['uuid']) . '&sub=1#' . TAG_NAME . '%20' . $encodedNameForSub;
                 ?>
                 <div class="config-list">
-                    <?php foreach ($targetGroup['configs'] as $cfg): ?>
+                    <?php foreach ($targetGroup['configs'] as $idx => $cfg): ?>
                     <div class="config-row">
+                        <span style="color:#94a3b8; font-weight:bold; font-size:14px; width:20px; text-align:right; flex-shrink:0;"><?= $idx + 1 ?>.</span>
                         <input type="text" class="code-input" value="<?= htmlspecialchars($cfg) ?>" readonly onclick="this.select();">
                         <button type="button" class="btn-icon btn-copy" onclick="copyText(decodeURIComponent('<?= rawurlencode($cfg) ?>'), this)" title="Copy">📋</button>
                         <form method="post" onsubmit="return confirm('Delete this config?');" style="margin:0; display:flex; flex-shrink:0;">
@@ -1783,7 +1782,7 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
             <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
             <label class="checkbox-item">
                 <input type="checkbox" name="config_share_add" id="config_share_add" onchange="toggleShareAdd()">
-                <span>Share Group</span>
+                <span style="color:#f59e0b;">Share Group</span>
             </label>
             <?php endif; ?>
         </div>
@@ -1835,7 +1834,7 @@ foreach ($groups as $i => $group):
             <?php if (!empty($ownerName)): ?>
                 <span style="position:absolute;right:10px;top:12px;font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.1);padding:3px 8px;border-radius:8px;"><?= $ownerName ?></span>
             <?php elseif ($isShared && $currentAdmin['uuid'] !== MAIN_ADMIN_UUID): ?>
-                <span style="position:absolute;right:10px;top:12px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,0.1);padding:3px 8px;border-radius:8px;">Shared</span>
+                <span style="position:absolute;right:10px;top:12px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,0.1);padding:3px 8px;border-radius:8px;">Shared from Main</span>
             <?php endif; ?>
         </div>
         <div style="flex:1;position:relative;">
@@ -1899,7 +1898,7 @@ foreach ($groups as $i => $group):
         <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
         <label class="checkbox-item">
             <input type="checkbox" name="updates[<?= $group['uuid'] ?>][share_group]" id="share_<?= $i ?>" <?= $isShared ? 'checked' : '' ?> onchange="toggleShareEdit(<?= $i ?>)">
-            <span>Share Group</span>
+            <span style="color:#f59e0b;">Share Group</span>
         </label>
         <?php endif; ?>
     </div>
