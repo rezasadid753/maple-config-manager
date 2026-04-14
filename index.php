@@ -488,46 +488,46 @@ if (isset($_GET['share'])) {
             error_reporting(0); // Suppress any warnings from breaking Base64 purity
             $exportConfigs = $targetGroup['configs'];
 
-            if (empty($targetGroup['hide_stats'])) {
+            if (!$targetGroup['free'] && empty($targetGroup['hide_stats'])) {
                 header("profile-title: " . SERIES_NAME . " " . $targetGroup['name']);
                 $headerParts = ["upload=0"];
-                if (empty($targetGroup['info'])) {
-                    // No info URL -> Treat as 0 usage and empty total
-                    $headerParts[] = "download=0";
-                    $headerParts[] = "total=0";
-                    $left_gb_raw = '?';
-                } else {
+
+                // Hiddify header logic
+                $totalBytes = ($targetGroup['quota'] ?? 0) * 1073741824;
+                $usedBytes = 0;
+                $left_gb_raw = '?';
+
+                if (!empty($targetGroup['info'])) {
                     $left_gb_raw = get_data_from_url($targetGroup['info']);
-                    $totalBytes = ($targetGroup['quota'] ?? 0) * 1073741824;
-                    $usedBytes = 0;
-                    
-                    if ($left_gb_raw !== '?' && $totalBytes > 0) {
-                        $leftBytes = (float)$left_gb_raw * 1073741824;
-                        $usedBytes = $totalBytes - $leftBytes;
-                        if ($usedBytes < 0) $usedBytes = 0;
-                    }
-                    $headerParts[] = "download=" . round($usedBytes);
-                    $headerParts[] = "total=" . round($totalBytes);
                 }
+                
+                if ($left_gb_raw !== '?' && $totalBytes > 0) {
+                    $leftBytes = (float)$left_gb_raw * 1073741824;
+                    $calculatedUsed = $totalBytes - $leftBytes;
+                    $usedBytes = ($calculatedUsed < 0) ? 0 : $calculatedUsed;
+                }
+                
+                $headerParts[] = "download=" . round($usedBytes);
+                $headerParts[] = "total=" . round($totalBytes);
 
                 // === Dummy Config Injection for Data & Time Readout ===
-                $parts = [SERIES_NAME];
-                if (!empty($targetGroup['info']) && $left_gb_raw !== '?') {
-                    $parts[] = "{$left_gb_raw}G";
+                $dummyParts = [];
+                if ($left_gb_raw !== '?') {
+                    $dummyParts[] = "{$left_gb_raw}G";
                 }
-
                 if (empty($targetGroup['no_time_limit'])) {
                     $diff = $targetGroup['expire_date'] - time();
                     $days = floor($diff / 86400);
-                    $parts[] = $days . 'D';
+                    $dummyParts[] = $days . 'D';
                 }
 
-                $dummyName = implode(" ", $parts);
-                // Valid standard format to ensure Hiddify doesn't ignore the rest of the configs
-                $dummyConfig = "vless://00000000-0000-0000-0000-000000000000@1.1.1.1:80?encryption=none&security=none&type=tcp#" . rawurlencode($dummyName);
-
-                array_unshift($exportConfigs, $dummyConfig);
-
+                if (!empty($dummyParts)) {
+                    array_unshift($dummyParts, SERIES_NAME);
+                    $dummyName = implode(" ", $dummyParts);
+                    $dummyConfig = "vless://00000000-0000-0000-0000-000000000000@1.1.1.1:80?encryption=none&security=none&type=tcp#" . rawurlencode($dummyName);
+                    array_unshift($exportConfigs, $dummyConfig);
+                }
+                
                 // Set expiry safely beyond 10 years if no limit
                 if (!empty($targetGroup['no_time_limit'])) {
                     $headerParts[] = "expire=" . (time() + 315360000);
@@ -537,8 +537,7 @@ if (isset($_GET['share'])) {
 
                 header("Subscription-Userinfo: " . implode("; ", $headerParts));
             }
-            // If hide_stats is true, we intentionally DO NOT set 'Subscription-Userinfo' or 'profile-title'
-            // so that Hiddify imports it strictly as raw configs without erroring.
+            // If hide_stats or free is true, we intentionally DO NOT set 'Subscription-Userinfo' or 'profile-title'
 
             // Clean configs to ensure Hiddify doesn't error out on \r\n or empty strings
             $cleanExport =[];
@@ -745,7 +744,7 @@ animation: spin 1s linear infinite; display: none;
                 $proto = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http");
                 $baseUrl = $proto . "://" . $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
                 
-                $encodedName = str_replace(' ', '%20', $targetGroup['name']);
+                $encodedName = rawurlencode($targetGroup['name']);
                 $fullShareLink = $baseUrl . '?share=' . urlencode($targetGroup['uuid']) 
                                . (!empty($targetGroup['owner']) ? '&owner=' . urlencode($targetGroup['owner']) : '') 
                                . '&pass=' . urlencode($targetGroup['pass']) 
@@ -756,7 +755,7 @@ animation: spin 1s linear infinite; display: none;
             <?php if ($targetGroup['free']): ?>
                 <?php
                 $finalConfigStr = implode("\n", $targetGroup['configs']);
-                $encodedNameForSub = str_replace(' ', '%20', $targetGroup['name']);
+                $encodedNameForSub = rawurlencode($targetGroup['name']);
                 $subUrl = $baseUrl . '?share=' . urlencode($targetGroup['uuid']) . '&sub=1#' . TAG_NAME . '%20' . $encodedNameForSub;
                 ?>
                 <div class="config-list">
@@ -1636,7 +1635,7 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
             <input type="text" name="config_pass" id="add_config_pass" class="pass-input" placeholder="Password" value="1234">
         </div>
 
-        <div class="info-row">
+        <div class="info-row" id="add_info_row">
             <input type="text" name="config_note" class="note-input" placeholder="Private Note">
             <input type="text" name="config_info" id="config_info_add" class="info-input" placeholder="Stats Info URL (For Checking Remaining Data)">
         </div>
@@ -1800,11 +1799,14 @@ foreach ($groups as $i => $group):
 <script>
 function toggleAddFreeConfig() {
     const isFree = document.getElementById('config_free_add').checked;
+    
+    // Get all relevant elements
     const passInput = document.getElementById('add_config_pass');
     const noTimeCheckbox = document.getElementById('config_notime_add');
     const hideStatsCheckbox = document.getElementById('config_hide_stats_add');
     const quotaWrapper = document.getElementById('add_quota_wrapper');
     const statsUrlInput = document.getElementById('config_info_add');
+    const statsUrlRow = document.getElementById('add_info_row');
 
     // Password field
     passInput.disabled = isFree;
@@ -1812,30 +1814,29 @@ function toggleAddFreeConfig() {
     if (isFree) passInput.value = '';
 
     // Time Limit
-    noTimeCheckbox.checked = true;
-    noTimeCheckbox.disabled = true;
+    noTimeCheckbox.checked = isFree;
+    noTimeCheckbox.disabled = isFree;
     toggleAddNoTime(); // Update days field visibility
 
     // Quota
-    if (quotaWrapper) {
-        quotaWrapper.style.display = 'none';
-        const quotaInput = document.getElementById('config_quota_add');
-        if(quotaInput) quotaInput.value = '0';
-    }
+    quotaWrapper.style.display = isFree ? 'none' : 'block';
+    const quotaInput = document.getElementById('config_quota_add');
+    if(quotaInput) quotaInput.value = '';
 
     // Hide Stats
-    hideStatsCheckbox.checked = true;
-    hideStatsCheckbox.disabled = true;
+    hideStatsCheckbox.checked = isFree;
+    hideStatsCheckbox.disabled = isFree;
     
-    // Stats URL
-    if (statsUrlInput) {
-        statsUrlInput.style.display = 'none';
-        statsUrlInput.value = '';
-    }
+    // Stats URL Section (hide the whole row)
+    statsUrlRow.style.display = isFree ? 'none' : 'flex';
+    if(statsUrlInput) statsUrlInput.value = '';
 }
+
 
 function toggleEditFreeConfig(index) {
     const isFree = document.getElementById('free_' + index).checked;
+    
+    // Get all relevant elements
     const passInput = document.getElementById('pass_' + index);
     const noTimeCheckbox = document.getElementById('notime_' + index);
     const hideStatsCheckbox = document.getElementById('hide_stats_' + index);
@@ -1853,7 +1854,7 @@ function toggleEditFreeConfig(index) {
 
     // Quota
     if (quotaWrapper) {
-        quotaWrapper.style.display = isFree ? 'none' : '';
+        quotaWrapper.style.display = isFree ? 'none' : 'block';
     }
 
     // Hide Stats
