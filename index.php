@@ -10,6 +10,9 @@ define("SERIES_NAME", "Maple");
 define("TAG_NAME", "Maple");
 define("ADMIN_DB_FILE", "admins.txt");
 
+// Define a global favicon to be used across all pages
+$favicon = '<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctitle%3EMaple-leaf%20SVG%20Icon%3C%2Ftitle%3E%3Cpath%20fill%3D%22%2306ac75%22%20d%3D%22M16.744%2026.221a368%20368%200%200%201%202.189%206.775a349%20349%200%200%201%206.637%204.422c1.24.854%202.475%201.721%203.689%202.631a42%2042%200%200%201%201.775%201.395l.359-13.863c-1.357-3.096-3.029-6.053-4.875-8.904a91%2091%200%200%200-6.262-8.512l2.613%2013.889c1.221%206.502-2.68%202.242-2.68%202.242l-6.02-6.959c.549%201.098.949%202.262%201.371%203.41z%22%2F%3E%3Cpath%20fill%3D%22%2306ac75%22%20d%3D%22m10.516%2027.523l7.207%204.68a380%20380%200%200%200-1.459-5.84l-.957-3.541c-.344-1.172-.664-2.355-1.135-3.486l-.77%203.111c-.426%201.713-1.254%201.777-1.559%201.738L3.16%2022.367c1.107%201.012%202.377%201.82%203.607%202.674zm22.089.057l.361%2013.863a43%2043%200%200%201%201.773-1.395c1.217-.91%202.451-1.777%203.691-2.631a346%20346%200%200%201%206.635-4.422a382%20382%200%200%201%202.191-6.775l1.199-3.475c.424-1.148.824-2.313%201.373-3.41l-6.02%206.959s-3.902%204.26-2.68-2.242l2.617-13.889l-.007.003a91%2091%200%200%200-6.261%208.509c-1.84%202.852-3.514%205.809-4.872%208.905%22%2F%3E%3Cpath%20fill%3D%22%2306ac75%22%20d%3D%22M31.447%2025.553L32%204.289l.553%2021.264c1.346-2.49%202.877-4.871%204.516-7.158a91%2091%200%200%201%206.673-8.228L38.91%2012.58c-.275.109-1.229.246-2.492-2.16L32%202l-4.416%208.42c-1.264%202.406-2.217%202.27-2.494%202.16l-4.832-2.416a91%2091%200%200%201%206.674%208.23c1.64%202.288%203.17%204.669%204.515%207.159m16.289.81a356%20356%200%200%200-1.457%205.84l7.205-4.68l3.75-2.482c1.229-.854%202.5-1.662%203.607-2.674l-8.684%201.818c-.301.039-1.135-.025-1.559-1.738l-.77-3.111c-.473%201.131-.791%202.314-1.135%203.486zm-35.189%209.471c2.914.123%205.834.188%208.75.227a533%20533%200%200%200-3.803-2.814l-7.264-5.313l-3.609-2.689c-1.182-.922-2.408-1.803-3.461-2.877l2.576%209.137c.109.656.061%201.629-1.018%202.102L2%2034.805c1.715.445%203.49.568%205.248.725c1.764.136%203.531.23%205.299.304m28.752%2011.488c-2.018-1.801-3.988-3.666-6.014-5.426c-.375.324-.754.645-1.109.977c-.418.395-.83.799-1.141%201.195l.175%206.729c.671.007%201.226.02%201.448.039l13.633%202.082c-1.283-.764-2.455-1.705-3.609-2.654a114%20114%200%200%201-3.383-2.942%22%2F%3E%3Cpath%20fill%3D%22%2306ac75%22%20d%3D%22M56.777%2035.777c-1.76.221-3.523.398-5.289.557c-3.363.299-6.729.531-10.1.725c-.693.523-1.389%201.041-2.074%201.57a115%20115%200%200%200-3.307%202.645c1.922%201.871%203.748%203.805%205.635%205.686a114%20114%200%200%200%203.205%203.117c1.096%201.008%202.205%202.008%203.443%202.842l-1.162-3.631c-.533-1.662%201.008-3.211%201.645-3.74C52.037%2042.814%2062%2034.805%2062%2034.805c-1.695.527-3.469.732-5.223.972m-26.951%207.096c-.355-.332-.734-.652-1.109-.977c-2.027%201.76-3.996%203.625-6.014%205.426a117%20117%200%200%201-3.385%202.941c-1.154.949-2.324%201.891-3.609%202.654l13.633-2.082c.225-.02.779-.032%201.45-.039l.175-6.729c-.313-.395-.725-.799-1.141-1.194%22%2F%3E%3Cpath%20fill%3D%22%2306ac75%22%20d%3D%22m53.77%2027.934l-7.264%205.313a655%20655%200%200%200-3.803%202.814c2.918-.039%205.836-.104%208.752-.227c1.768-.074%203.533-.168%205.297-.305c1.758-.156%203.533-.279%205.248-.725l-2.717-1.199c-1.078-.473-1.129-1.445-1.018-2.102l2.576-9.137c-1.053%201.074-2.281%201.955-3.463%202.877zM22.357%2046.959c1.887-1.881%203.713-3.814%205.637-5.686c-1.08-.9-2.189-1.777-3.309-2.645c-.686-.529-1.381-1.047-2.072-1.57a321%20321%200%200%201-10.1-.725a149%20149%200%200%201-5.291-.557c-1.751-.239-3.527-.444-5.222-.971c0%200%209.963%208.01%2013.229%2010.742c.637.529%202.176%202.078%201.645%203.74l-1.164%203.631c1.238-.834%202.35-1.834%203.445-2.842a113%20113%200%200%200%203.202-3.117m8.435%203.838L30.5%2062h3l-.29-11.203c-.757-.009-1.661-.009-2.418%200%22%2F%3E%3C%2Fsvg%3E">';
+
 // Helper for secure comparison
 function secure_compare($a, $b) {
     return $a === $b;
@@ -123,6 +126,7 @@ function get_database_groups() {
     $currentUUID = '';
     $currentPass = '';
     $currentNote = '';
+    $currentAdminNote = ''; // New field for admin-only notes
     $currentInfo = ''; 
     $currentType = 'auto'; 
     $currentIncludedBy = [];
@@ -137,7 +141,7 @@ function get_database_groups() {
     $needsSave = false;
     $legacyInclude = false;
 
-    $finalizeGroup = function() use (&$groups, &$currentName, &$currentUUID, &$currentPass, &$currentNote, &$currentInfo, &$currentType, &$currentIncludedBy, &$currentSharedWith, &$currentFree, &$currentHideStats, &$currentOwner, &$currentExpireDate, &$currentNoTimeLimit, &$currentQuota, &$currentConfigs, &$needsSave, &$legacyInclude) {
+    $finalizeGroup = function() use (&$groups, &$currentName, &$currentUUID, &$currentPass, &$currentNote, &$currentAdminNote, &$currentInfo, &$currentType, &$currentIncludedBy, &$currentSharedWith, &$currentFree, &$currentHideStats, &$currentOwner, &$currentExpireDate, &$currentNoTimeLimit, &$currentQuota, &$currentConfigs, &$needsSave, &$legacyInclude) {
         if (!empty($currentConfigs)) {
             if (empty($currentUUID)) {
                 $currentUUID = uniqid(); 
@@ -162,6 +166,7 @@ function get_database_groups() {
                 'name' => $currentName ?: 'Config ' . (count($groups) + 1),
                 'pass' => $currentPass,
                 'note' => $currentNote,
+                'admin_note' => $currentAdminNote,
                 'info' => $currentInfo,
                 'type' => $currentType,
                 'included_by' => array_values(array_unique($currentIncludedBy)),
@@ -179,6 +184,7 @@ function get_database_groups() {
         $currentUUID = '';
         $currentPass = '';
         $currentNote = '';
+        $currentAdminNote = '';
         $currentInfo = '';
         $currentType = 'auto';
         $currentIncludedBy = [];
@@ -204,6 +210,8 @@ function get_database_groups() {
             $currentPass = trim(substr($line, 7));
         } elseif (strpos($line, '#NOTE: ') === 0) {
             $currentNote = trim(substr($line, 7));
+        } elseif (strpos($line, '#ADMIN_NOTE: ') === 0) {
+            $currentAdminNote = trim(substr($line, 13));
         } elseif (strpos($line, '#INFO: ') === 0) {
             $currentInfo = trim(substr($line, 7));
         } elseif (strpos($line, '#TYPE: ') === 0) {
@@ -249,6 +257,7 @@ function save_database_groups($groups) {
         if (!empty($group['uuid'])) $output[] = "#UUID: " . $group['uuid'];
         if (!empty($group['pass'])) $output[] = "#PASS: " . $group['pass'];
         if (!empty($group['note'])) $output[] = "#NOTE: " . $group['note'];
+        if (!empty($group['admin_note'])) $output[] = "#ADMIN_NOTE: " . $group['admin_note'];
         if (!empty($group['info'])) $output[] = "#INFO: " . $group['info'];
         if (!empty($group['type'])) $output[] = "#TYPE: " . $group['type']; 
         
@@ -374,6 +383,7 @@ if (isset($_GET['free_configs'])) {
                 'name' => trim($_POST['config_name']) ?: 'Free Config ' . (count($freeGroups) + 1),
                 'pass' => '',
                 'note' => trim($_POST['config_note']),
+                'admin_note' => '',
                 'info' => trim($_POST['config_info']),
                 'type' => 'auto',
                 'included_by' => [], // Default empty inclusion
@@ -398,6 +408,7 @@ if (isset($_GET['free_configs'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?= $favicon ?>
     <title>Free Configs - <?= SERIES_NAME ?></title>
     <style>
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -670,6 +681,7 @@ if (isset($_GET['share'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?= $favicon ?>
     <title>Client Config - <?= SERIES_NAME ?></title>
     <style>
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -694,7 +706,11 @@ if (isset($_GET['share'])) {
         h2{
             background:linear-gradient(135deg, #22c55e, #4ade80);
             -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-            font-size:24px;margin-bottom:20px;font-weight:800;
+            font-size:24px;margin-bottom:8px;font-weight:800;
+        }
+        .public-note{
+            color:#cbd5e1;font-size:14px;margin-bottom:20px;
+            padding:10px;background:rgba(255,255,255,0.05);border-radius:12px;
         }
         input{
             width:100%;background:rgba(4,8,20,0.6);border:1px solid rgba(59,130,246,0.3);
@@ -767,6 +783,9 @@ animation: spin 1s linear infinite; display: none;
             </form>
         <?php else: ?>
             <h2>🍁 <?= htmlspecialchars($targetGroup['name']) ?></h2>
+            <?php if (!empty($targetGroup['note'])): ?>
+                <p class="public-note"><?= htmlspecialchars($targetGroup['note']) ?></p>
+            <?php endif; ?>
             <?php 
                 if($shareSuccess) echo "<div class='message success'>$shareSuccess</div>"; 
                 if($shareError) echo "<div class='message error'>$shareError</div>"; 
@@ -981,6 +1000,7 @@ if (isset($_GET['sub']) && $_GET['sub'] === '1') {
     <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?= $favicon ?>
     <title>Unlock Configs</title>
     <style>
         body{min-height:100vh;background:linear-gradient(135deg, #0c0c1a 0%, #1a0d2e 50%, #0f172a 100%);color:#e2e8f0;font-family:'Segoe UI',-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow-x:hidden;margin:0;}
@@ -1034,6 +1054,7 @@ if (isset($_GET['sub']) && $_GET['sub'] === '1') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?= $favicon ?>
     <title><?= SERIES_NAME ?> - Individual Configs</title>
     <style>
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -1224,6 +1245,7 @@ if (!$isAdminLoggedIn) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<?= $favicon ?>
 <title>Admin Login</title>
 <style>
     body{min-height:100vh;background:linear-gradient(135deg, #0c0c1a 0%, #1a0d2e 50%, #0f172a 100%);color:#e2e8f0;font-family:'Segoe UI',-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow-x:hidden;margin:0;}
@@ -1353,6 +1375,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
                 'name' => trim($_POST['config_name']) ?: 'Config ' . (count($groups) + 1),
                 'pass' => $isFree ? '' : (trim($_POST['config_pass']) ?: '1234'),
                 'note' => trim($_POST['config_note']),
+                'admin_note' => trim($_POST['config_admin_note']),
                 'info' => $info,
                 'type' => 'auto',
                 'included_by' => $included_by,
@@ -1383,6 +1406,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
     if (isset($_POST['updates'])) {
         $needsSave = false;
         
+        // Handle reordering first, if the order data is submitted
+        if (isset($_POST['config_order']) && is_array($_POST['config_order'])) {
+            $orderedUuids = $_POST['config_order'];
+            $groupsByUuid = [];
+            foreach ($groups as $group) {
+                $groupsByUuid[$group['uuid']] = $group;
+            }
+            
+            $reorderedGroups = [];
+            foreach ($orderedUuids as $uuid) {
+                if (isset($groupsByUuid[$uuid])) {
+                    $reorderedGroups[] = $groupsByUuid[$uuid];
+                    unset($groupsByUuid[$uuid]); // Remove from map
+                }
+            }
+            // Add any remaining groups that weren't in the order list (edge case)
+            foreach ($groupsByUuid as $group) {
+                $reorderedGroups[] = $group;
+            }
+            $groups = $reorderedGroups;
+            $needsSave = true;
+        }
+        
         $allAdmins = get_admin_users();
         $adminUsernameToUuid = [];
         foreach ($allAdmins as $adm) {
@@ -1402,6 +1448,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
 
                     $group['name'] = trim($data['name']);
                     if(isset($data['note'])) $group['note'] = trim($data['note']);
+                    if(isset($data['admin_note'])) $group['admin_note'] = trim($data['admin_note']);
                     if(isset($data['info'])) $group['info'] = trim($data['info']);
                     
                     // Handle per-admin inclusion
@@ -1503,6 +1550,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SESSION['admin_uuid'])) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<?= $favicon ?>
 <title><?= SERIES_NAME ?> Panel</title>
 <style>
 /* Base Styles */
@@ -1548,14 +1596,14 @@ outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.15);
 }
 
 /* Custom Input Wrappers with Units inside */
-.input-wrapper { position: relative; flex: 1; max-width: 150px; }
+.input-wrapper { position: relative; flex: 1; min-width: 120px; max-width:150px; }
 .input-wrapper input { padding-right: 48px; }
 .input-wrapper .unit { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 13px; font-weight: bold; pointer-events: none; }
 
 .row-inputs { display:flex; gap: 10px; margin-bottom:12px; }
 .name-input { flex: 2; border-color:rgba(34,197,94,0.4); }
 .pass-input { flex: 1; border-color:rgba(234,179,8,0.4); }
-.note-input { flex:1; border-color:rgba(99,102,241,0.4); }
+.note-input { flex:1; }
 
 .info-row { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
 .info-input { flex:3; border-color:rgba(236, 72, 153, 0.4); }
@@ -1640,11 +1688,22 @@ animation: spin 1s linear infinite; display: none; margin-right:5px;
 .btn-icon.btn-danger { background: #ef4444; color: white; }
 .btn-icon.btn-danger:hover { filter: brightness(1.2); }
 
+.reorder-controls { display:flex; gap:8px; margin-left:auto; }
+.btn-reorder {
+    background:rgba(255,255,255,0.1); color:white; border:1px solid rgba(255,255,255,0.2);
+    width:38px; height:38px; border-radius:8px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:18px;
+}
+.btn-reorder:hover { background:rgba(255,255,255,0.2); }
+.btn-reorder:disabled { opacity:0.4; cursor:not-allowed; }
+
 @media (max-width: 768px) {
 .row-inputs { flex-direction: column; gap: 10px; }
 .info-row { flex-direction: column; align-items: stretch; gap: 10px; border-bottom: none !important; padding-bottom: 0 !important; }
 .btn-check, .info-input, .note-input, .input-wrapper { width: 100%; flex: none; max-width: none !important; }
-.checkbox-container { flex-direction: column; align-items: flex-start; gap: 15px; }
+.checkbox-container { flex-direction: column; align-items: stretch; gap: 15px; }
+.reorder-controls { margin-left:0; width:100%; }
+.reorder-controls .btn-reorder { flex: 1; }
 .btn-group { flex-direction: column; }
 header h1 { font-size: 28px; }
 .admin-row { gap: 10px; margin-bottom: 20px !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important; padding-bottom: 20px !important; }
@@ -1747,12 +1806,17 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
         </div>
 
         <div class="info-row" id="add_info_row">
-            <input type="text" name="config_note" class="note-input" placeholder="Private Note">
             <input type="text" name="config_info" id="config_info_add" class="info-input" placeholder="Stats Info URL (For Checking Remaining Data)">
+            <button type="button" class="btn-check" disabled>Check</button>
         </div>
 
         <div class="info-row" style="margin-bottom:15px;">
-            <div class="input-wrapper" id="add_days_wrapper">
+            <input type="text" name="config_note" class="note-input" placeholder="📝 Public Note (Visible to User)">
+            <input type="text" name="config_admin_note" class="note-input" placeholder="🔒 Admin Note (Private)">
+        </div>
+        
+        <div class="info-row" style="margin-bottom:15px;">
+             <div class="input-wrapper" id="add_days_wrapper">
                 <input type="number" name="config_days" id="config_days_add" class="info-input" placeholder="0">
                 <span class="unit">Days</span>
             </div>
@@ -1801,7 +1865,7 @@ if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID) {
 
 <!-- MAIN UPDATE FORM FOR LIST OF CONFIGS -->
 <form method="post" id="update_form" style="margin-bottom:40px;">
-
+<div id="config-card-container">
 <?php
 foreach ($groups as $i => $group): 
     $fullConfig = implode("\n", $group['configs']);
@@ -1824,7 +1888,7 @@ foreach ($groups as $i => $group):
         $sharedUsernamesStr = implode(', ', $uNames);
     }
 ?>
-<div class="card <?= $isIncludedByMe ? 'active-config' : '' ?>" id="card_<?= $i ?>">
+<div class="card <?= $isIncludedByMe ? 'active-config' : '' ?>" id="card_<?= $i ?>" data-uuid="<?= htmlspecialchars($group['uuid']) ?>">
     <input type="hidden" name="updates[<?= $group['uuid'] ?>][uuid_marker]" value="1">
     <div class="row-inputs">
         <div style="flex:2;position:relative;">
@@ -1857,7 +1921,9 @@ foreach ($groups as $i => $group):
 
     <div class="info-row" style="margin-bottom:15px;">
         <input type="text" name="updates[<?= $group['uuid'] ?>][note]" value="<?= htmlspecialchars($group['note'] ?? '') ?>" 
-               placeholder="📝 Private Note" class="note-input" style="flex:auto; width:100%;">
+               placeholder="📝 Public Note" class="note-input" style="flex:1;">
+        <input type="text" name="updates[<?= $group['uuid'] ?>][admin_note]" value="<?= htmlspecialchars($group['admin_note'] ?? '') ?>" 
+               placeholder="🔒 Admin Note" class="note-input" style="flex:1;">
     </div>
 
     <div class="info-row" style="margin-bottom:15px;">
@@ -1901,6 +1967,10 @@ foreach ($groups as $i => $group):
             <span style="color:#f59e0b;">Share Group</span>
         </label>
         <?php endif; ?>
+        <div class="reorder-controls">
+            <button type="button" class="btn-reorder" title="Move Up" onclick="moveConfig(this, 'up')">▲</button>
+            <button type="button" class="btn-reorder" title="Move Down" onclick="moveConfig(this, 'down')">▼</button>
+        </div>
     </div>
 
     <?php if ($currentAdmin['uuid'] === MAIN_ADMIN_UUID): ?>
@@ -1921,6 +1991,7 @@ foreach ($groups as $i => $group):
     </div>
 </div>
 <?php endforeach; ?>
+</div>
 </form>
 
 <div class="sub-section">
@@ -2151,8 +2222,61 @@ function checkAdminStats(index) {
     });
 }
 
-// Logic for Free Config toggles
+// --- NEW ASYNC REORDERING LOGIC ---
+function moveConfig(button, direction) {
+    const card = button.closest('.card');
+    if (!card) return;
+
+    if (direction === 'up') {
+        const prev = card.previousElementSibling;
+        if (prev) {
+            prev.before(card);
+        }
+    } else if (direction === 'down') {
+        const next = card.nextElementSibling;
+        if (next) {
+            next.after(card);
+        }
+    }
+    updateArrowStates();
+}
+
+function updateArrowStates() {
+    const container = document.getElementById('config-card-container');
+    const cards = container.querySelectorAll('.card');
+    cards.forEach((card, index) => {
+        const upButton = card.querySelector('.btn-reorder[onclick*="\'up\'"]');
+        const downButton = card.querySelector('.btn-reorder[onclick*="\'down\'"]');
+        if (upButton) upButton.disabled = (index === 0);
+        if (downButton) downButton.disabled = (index === cards.length - 1);
+    });
+}
+
+document.getElementById('update_form').addEventListener('submit', function(e) {
+    // Before submitting, create hidden inputs for the new order
+    const container = document.getElementById('config-card-container');
+    const cards = container.querySelectorAll('.card');
+    
+    // Clear any previous order inputs to avoid duplication
+    this.querySelectorAll('input[name="config_order[]"]').forEach(input => input.remove());
+    
+    cards.forEach(card => {
+        const uuid = card.dataset.uuid;
+        if (uuid) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'config_order[]';
+            input.value = uuid;
+            this.appendChild(input);
+        }
+    });
+});
+
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Initial state for reorder buttons
+    updateArrowStates();
+
     // Run for "Add New" form on page load
     const addFreeCheckbox = document.getElementById('config_free_add');
     if (addFreeCheckbox && addFreeCheckbox.checked) {
